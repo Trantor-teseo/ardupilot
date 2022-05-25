@@ -19,6 +19,7 @@
 #include "AP_Beacon_Marvelmind.h"
 #include "AP_Beacon_Nooploop.h"
 #include "AP_Beacon_SITL.h"
+#include "AP_Beacon_LuminousBees.h"
 
 #include <AP_Common/Location.h>
 
