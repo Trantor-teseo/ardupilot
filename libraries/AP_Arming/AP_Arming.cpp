@@ -796,7 +796,7 @@ bool AP_Arming::servo_checks(bool report) const
     bool check_passed = true;
     for (uint8_t i = 0; i < NUM_SERVO_CHANNELS; i++) {
         const SRV_Channel *c = SRV_Channels::srv_channel(i);
-        if (c == nullptr || c->get_function() == SRV_Channel::k_none) {
+        if (c == nullptr || c->get_function() <= SRV_Channel::k_none) {
             continue;
         }
 
@@ -808,6 +808,23 @@ bool AP_Arming::servo_checks(bool report) const
         if (c->get_output_max() < trim) {
             check_failed(report, "SERVO%d_MAX is less than SERVO%d_TRIM", i + 1, i + 1);
             check_passed = false;
+        }
+
+        // check functions using PWM are enabled
+        if (SRV_Channels::get_disabled_channel_mask() & 1U<<i) {
+            const SRV_Channel::Aux_servo_function_t ch_function = c->get_function();
+
+            // motors, e-stoppable functions, neopixels and ProfiLEDs may be digital outputs and thus can be disabled
+            const bool disabled_ok = SRV_Channel::is_motor(ch_function) ||
+                                     SRV_Channel::should_e_stop(ch_function) ||
+                                     (ch_function >= SRV_Channel::k_LED_neopixel1 && ch_function <= SRV_Channel::k_LED_neopixel4) ||
+                                     (ch_function >= SRV_Channel::k_ProfiLED_1 && ch_function <= SRV_Channel::k_ProfiLED_Clock);
+
+            // for all other functions raise a pre-arm failure
+            if (!disabled_ok) {
+                check_failed(report, "SERVO%u_FUNCTION=%u on disabled channel", i + 1, (unsigned)ch_function);
+                check_passed = false;
+            }
         }
     }
 
@@ -1363,6 +1380,21 @@ bool AP_Arming::arm(AP_Arming::Method method, const bool do_arming_checks)
         AP::logger().arming_failure();
         armed = false;
     }
+
+    if (armed && do_arming_checks && checks_to_perform == 0) {
+        gcs().send_text(MAV_SEVERITY_WARNING, "Warning: Arming Checks Disabled");
+    }
+
+#if AP_TERRAIN_AVAILABLE
+    if (armed) {
+        // tell terrain we have just armed, so it can setup
+        // a reference location for terrain adjustment
+        auto *terrain = AP::terrain();
+        if (terrain != nullptr) {
+            terrain->set_reference_location();
+        }
+    }
+#endif
 
     return armed;
 }

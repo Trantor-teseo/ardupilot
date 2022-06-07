@@ -124,26 +124,26 @@ void AC_AutoTune_Heli::test_init()
                 if (test_phase[12] > 0.0f && test_phase[12] < 180.0f) {
                     freq_cnt = 12;
                 // start with freq found for sweep where phase was 180 deg
-                } else if (!is_zero(sweep.ph180_freq)) {
+                } else if (!is_zero(sweep.ph180.freq)) {
                     freq_cnt = 12;
-                    test_freq[freq_cnt] = sweep.ph180_freq - 0.25f * 3.14159f * 2.0f;
+                    test_freq[freq_cnt] = sweep.ph180.freq - 0.25f * 3.14159f * 2.0f;
                 // otherwise start at min freq to step up in dwell frequency until phase > 160 deg
                 } else {
                     freq_cnt = 0;
                     test_freq[freq_cnt] = min_sweep_freq;
                 }
-                curr_test_freq = test_freq[freq_cnt];
-                start_freq = curr_test_freq;
-                stop_freq = curr_test_freq;
+                curr_test.freq = test_freq[freq_cnt];
+                start_freq = curr_test.freq;
+                stop_freq = curr_test.freq;
 
             // MAX_GAINS and RD_UP both start with a sweep initially but if it has been completed then start dwells at the freq for 180 deg phase
             } else {
-                if (!is_zero(sweep.ph180_freq)) {
+                if (!is_zero(sweep.ph180.freq)) {
                     freq_cnt = 12;
-                    test_freq[freq_cnt] = sweep.ph180_freq - 0.25f * 3.14159f * 2.0f;
-                    curr_test_freq = test_freq[freq_cnt];
-                    start_freq = curr_test_freq;
-                    stop_freq = curr_test_freq;
+                    test_freq[freq_cnt] = sweep.ph180.freq - 0.25f * 3.14159f * 2.0f;
+                    curr_test.freq = test_freq[freq_cnt];
+                    start_freq = curr_test.freq;
+                    stop_freq = curr_test.freq;
                     if (tune_type == MAX_GAINS) {
                         reset_maxgains_update_gain_variables();
                     }
@@ -155,12 +155,12 @@ void AC_AutoTune_Heli::test_init()
         }
         if (!is_equal(start_freq,stop_freq)) {
             // initialize determine_gain function whenever test is initialized
-            freqresp_rate.init(AC_AutoTune_FreqResp::InputType::SWEEP, AC_AutoTune_FreqResp::ResponseType::RATE);
-            dwell_test_init(start_freq, stop_freq);
+            freqresp.init(AC_AutoTune_FreqResp::InputType::SWEEP, AC_AutoTune_FreqResp::ResponseType::RATE);
+            dwell_test_init(start_freq, stop_freq, stop_freq, RATE);
         } else {
             // initialize determine_gain function whenever test is initialized
-            freqresp_rate.init(AC_AutoTune_FreqResp::InputType::DWELL, AC_AutoTune_FreqResp::ResponseType::RATE);
-            dwell_test_init(start_freq, start_freq);
+            freqresp.init(AC_AutoTune_FreqResp::InputType::DWELL, AC_AutoTune_FreqResp::ResponseType::RATE);
+            dwell_test_init(start_freq, stop_freq, start_freq, RATE);
         }
         if (!is_zero(start_freq)) {
             // 4 seconds is added to allow aircraft to achieve start attitude.  Then the time to conduct the dwells is added to it.
@@ -170,12 +170,12 @@ void AC_AutoTune_Heli::test_init()
     case SP_UP:
         // initialize start frequency
         if (is_zero(start_freq)) {
-            if (!is_zero(sweep.maxgain_freq)) {
+            if (!is_zero(sweep.maxgain.freq)) {
                 freq_cnt = 12;
-                test_freq[freq_cnt] = sweep.maxgain_freq - 0.25f * 3.14159f * 2.0f;
-                curr_test_freq = test_freq[freq_cnt];
-                start_freq = curr_test_freq;
-                stop_freq = curr_test_freq;
+                test_freq[freq_cnt] = sweep.maxgain.freq - 0.25f * 3.14159f * 2.0f;
+                curr_test.freq = test_freq[freq_cnt];
+                start_freq = curr_test.freq;
+                stop_freq = curr_test.freq;
                 test_accel_max = 0.0f;
             } else {
                 start_freq = min_sweep_freq;
@@ -185,12 +185,12 @@ void AC_AutoTune_Heli::test_init()
 
         if (!is_equal(start_freq,stop_freq)) {
             // initialize determine gain function
-            freqresp_angle.init(AC_AutoTune_FreqResp::InputType::SWEEP, AC_AutoTune_FreqResp::ResponseType::ANGLE);
-            angle_dwell_test_init(start_freq, stop_freq);
+            freqresp.init(AC_AutoTune_FreqResp::InputType::SWEEP, AC_AutoTune_FreqResp::ResponseType::ANGLE);
+            dwell_test_init(start_freq, stop_freq, stop_freq, ANGLE);
         } else {
             // initialize determine gain function
-            freqresp_angle.init(AC_AutoTune_FreqResp::InputType::DWELL, AC_AutoTune_FreqResp::ResponseType::ANGLE);
-            angle_dwell_test_init(start_freq, start_freq);
+            freqresp.init(AC_AutoTune_FreqResp::InputType::DWELL, AC_AutoTune_FreqResp::ResponseType::ANGLE);
+            dwell_test_init(start_freq, stop_freq, start_freq, ANGLE);
         }
 
         // TODO add time limit for sweep test
@@ -211,11 +211,10 @@ void AC_AutoTune_Heli::test_run(AxisType test_axis, const float dir_sign)
 {
     // if tune complete or beyond frequency range or no max allowed gains then exit testing
     if (tune_type == TUNE_COMPLETE ||
-       (tune_type == RP_UP && max_rate_p.max_allowed <= 0.0f) ||
-       (tune_type == RD_UP && max_rate_d.max_allowed <= 0.0f) ||
+       ((tune_type == RP_UP || tune_type == RD_UP) && (max_rate_p.max_allowed <= 0.0f || max_rate_d.max_allowed <= 0.0f)) ||
        ((tune_type == MAX_GAINS || tune_type == RP_UP || tune_type == RD_UP || tune_type == SP_UP) && exceeded_freq_range(start_freq))){
 
-        load_gains(GAIN_INTRA_TEST);
+        load_gains(GAIN_ORIGINAL);
 
         attitude_control->use_sqrt_controller(true);
 
@@ -224,15 +223,16 @@ void AC_AutoTune_Heli::test_run(AxisType test_axis, const float dir_sign)
         // hold level attitude
         attitude_control->input_euler_angle_roll_pitch_yaw(roll_cd, pitch_cd, desired_yaw_cd, true);
 
-        if ((tune_type == RP_UP && max_rate_p.max_allowed <= 0.0f) || (tune_type == RD_UP && max_rate_d.max_allowed <= 0.0f)) {
-            gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: Max Gains Failed, Skip Rate P/D Tuning");
-            counter = AUTOTUNE_SUCCESS_COUNT;
-            step = UPDATE_GAINS;
+        if ((tune_type == RP_UP || tune_type == RD_UP) && (max_rate_p.max_allowed <= 0.0f || max_rate_d.max_allowed <= 0.0f)) {
+            gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: Max Gain Determination Failed");
+            mode = FAILED;
+            AP::logger().Write_Event(LogEvent::AUTOTUNE_FAILED);
+            update_gcs(AUTOTUNE_MESSAGE_FAILED);
         } else if ((tune_type == MAX_GAINS || tune_type == RP_UP || tune_type == RD_UP || tune_type == SP_UP) && exceeded_freq_range(start_freq)){
             gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: Exceeded frequency range");
-            AP::logger().Write_Event(LogEvent::AUTOTUNE_REACHED_LIMIT);
-            counter = AUTOTUNE_SUCCESS_COUNT;
-            step = UPDATE_GAINS;
+            mode = FAILED;
+            AP::logger().Write_Event(LogEvent::AUTOTUNE_FAILED);
+            update_gcs(AUTOTUNE_MESSAGE_FAILED);
         } else if (tune_type == TUNE_COMPLETE) {
             counter = AUTOTUNE_SUCCESS_COUNT;
             step = UPDATE_GAINS;
@@ -246,13 +246,13 @@ void AC_AutoTune_Heli::test_run(AxisType test_axis, const float dir_sign)
         break;
     case RP_UP:
     case RD_UP:
-        dwell_test_run(1, start_freq, stop_freq, test_gain[freq_cnt], test_phase[freq_cnt]);
+        dwell_test_run(1, start_freq, stop_freq, test_gain[freq_cnt], test_phase[freq_cnt], RATE);
         break;
     case MAX_GAINS:
-        dwell_test_run(0, start_freq, stop_freq, test_gain[freq_cnt], test_phase[freq_cnt]);
+        dwell_test_run(0, start_freq, stop_freq, test_gain[freq_cnt], test_phase[freq_cnt], RATE);
         break;
     case SP_UP:
-        angle_dwell_test_run(start_freq, stop_freq, test_gain[freq_cnt], test_phase[freq_cnt]);
+        dwell_test_run(1, start_freq, stop_freq, test_gain[freq_cnt], test_phase[freq_cnt], ANGLE);
         break;
     default:
         step = UPDATE_GAINS;
@@ -280,7 +280,7 @@ void AC_AutoTune_Heli::do_gcs_announcements()
         } else {
             gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: Sweep");
             if (settle_time == 0) {
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: freq=%f gain=%f phase=%f", (double)(curr_test_freq), (double)(curr_test_gain), (double)(curr_test_phase));
+                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: freq=%f gain=%f phase=%f", (double)(curr_test.freq), (double)(curr_test.gain), (double)(curr_test.phase));
             }
         }
         break;
@@ -330,38 +330,23 @@ void AC_AutoTune_Heli::do_post_test_gcs_announcements() {
             gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ff=%f", (double)tune_rff);
             break;
         case RP_UP:
+        case RD_UP:
+        case SP_UP:
+        case MAX_GAINS:
             if (is_equal(start_freq,stop_freq)) {
                 // announce results of dwell
                 gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: freq=%f gain=%f", (double)(test_freq[freq_cnt]), (double)(test_gain[freq_cnt]));
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ph=%f rate_p=%f", (double)(test_phase[freq_cnt]), (double)(tune_rp));
+                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ph=%f", (double)(test_phase[freq_cnt]));
+               if (tune_type == RP_UP) {
+                   gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: rate_p=%f", (double)(tune_rp));
+               } else if (tune_type == RD_UP) {
+               gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: rate_d=%f", (double)(tune_rd));
+               } else if (tune_type == SP_UP) {
+                   gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: angle_p=%f tune_accel=%f max_accel=%f", (double)(tune_sp), (double)(tune_accel), (double)(test_accel_max));
+               }
             } else {
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: max_freq=%f max_gain=%f", (double)(sweep.maxgain_freq), (double)(sweep.maxgain_gain));
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ph180_freq=%f ph180_gain=%f", (double)(sweep.ph180_freq), (double)(sweep.ph180_gain));
-            }
-            break;
-        case RD_UP:
-            // announce results of dwell
-            gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: freq=%f gain=%f", (double)(test_freq[freq_cnt]), (double)(test_gain[freq_cnt]));
-            gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ph=%f rate_d=%f", (double)(test_phase[freq_cnt]), (double)(tune_rd));
-            break;
-        case SP_UP:
-            if (is_equal(start_freq,stop_freq)) {
-                // announce results of dwell and update
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: freq=%f gain=%f", (double)(test_freq[freq_cnt]), (double)(test_gain[freq_cnt]));
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: phase=%f angle_p=%f", (double)(test_phase[freq_cnt]), (double)(tune_sp));
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: tune_accel=%f max_accel=%f", (double)(tune_accel), (double)(test_accel_max));
-            } else {
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: max_freq=%f max_gain=%f", (double)(sweep.maxgain_freq), (double)(sweep.maxgain_gain));
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ph180_freq=%f ph180_gain=%f", (double)(sweep.ph180_freq), (double)(sweep.ph180_gain));
-            }
-            break;
-        case MAX_GAINS:
-            if (is_equal(start_freq,stop_freq)) {
-                // announce results of dwell and update
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: freq=%f gain=%f ph=%f", (double)(test_freq[freq_cnt]), (double)(test_gain[freq_cnt]), (double)(test_phase[freq_cnt]));
-            } else {
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: max_freq=%f max_gain=%f", (double)(sweep.maxgain_freq), (double)(sweep.maxgain_gain));
-                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ph180_freq=%f ph180_gain=%f", (double)(sweep.ph180_freq), (double)(sweep.ph180_gain));
+                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: max_freq=%f max_gain=%f", (double)(sweep.maxgain.freq), (double)(sweep.maxgain.gain));
+                gcs().send_text(MAV_SEVERITY_INFO, "AutoTune: ph180_freq=%f ph180_gain=%f", (double)(sweep.ph180.freq), (double)(sweep.ph180.gain));
             }
             break;
         default:
@@ -437,35 +422,13 @@ void AC_AutoTune_Heli::load_orig_gains()
 {
     attitude_control->bf_feedforward(orig_bf_feedforward);
     if (roll_enabled()) {
-        attitude_control->get_rate_roll_pid().kP(orig_roll_rp);
-        attitude_control->get_rate_roll_pid().kI(orig_roll_ri);
-        attitude_control->get_rate_roll_pid().kD(orig_roll_rd);
-        attitude_control->get_rate_roll_pid().ff(orig_roll_rff);
-        attitude_control->get_rate_roll_pid().filt_T_hz(orig_roll_fltt);
-        attitude_control->get_rate_roll_pid().slew_limit(orig_roll_smax);
-        attitude_control->get_angle_roll_p().kP(orig_roll_sp);
-        attitude_control->set_accel_roll_max_cdss(orig_roll_accel);
+        load_gain_set(ROLL, orig_roll_rp, orig_roll_ri, orig_roll_rd, orig_roll_rff, orig_roll_sp, orig_roll_accel, orig_roll_fltt, 0.0f, orig_roll_smax);
     }
     if (pitch_enabled()) {
-        attitude_control->get_rate_pitch_pid().kP(orig_pitch_rp);
-        attitude_control->get_rate_pitch_pid().kI(orig_pitch_ri);
-        attitude_control->get_rate_pitch_pid().kD(orig_pitch_rd);
-        attitude_control->get_rate_pitch_pid().ff(orig_pitch_rff);
-        attitude_control->get_rate_pitch_pid().filt_T_hz(orig_pitch_fltt);
-        attitude_control->get_rate_pitch_pid().slew_limit(orig_pitch_smax);
-        attitude_control->get_angle_pitch_p().kP(orig_pitch_sp);
-        attitude_control->set_accel_pitch_max_cdss(orig_pitch_accel);
+        load_gain_set(PITCH, orig_pitch_rp, orig_pitch_ri, orig_pitch_rd, orig_pitch_rff, orig_pitch_sp, orig_pitch_accel, orig_pitch_fltt, 0.0f, orig_pitch_smax);
     }
     if (yaw_enabled()) {
-        attitude_control->get_rate_yaw_pid().kP(orig_yaw_rp);
-        attitude_control->get_rate_yaw_pid().kI(orig_yaw_ri);
-        attitude_control->get_rate_yaw_pid().kD(orig_yaw_rd);
-        attitude_control->get_rate_yaw_pid().ff(orig_yaw_rff);
-        attitude_control->get_rate_yaw_pid().filt_E_hz(orig_yaw_rLPF);
-        attitude_control->get_rate_yaw_pid().filt_T_hz(orig_yaw_fltt);
-        attitude_control->get_rate_yaw_pid().slew_limit(orig_yaw_smax);
-        attitude_control->get_angle_yaw_p().kP(orig_yaw_sp);
-        attitude_control->set_accel_yaw_max_cdss(orig_yaw_accel);
+        load_gain_set(YAW, orig_yaw_rp, orig_yaw_ri, orig_yaw_rd, orig_yaw_rff, orig_yaw_sp, orig_yaw_accel, orig_yaw_fltt, orig_yaw_rLPF, orig_yaw_smax);
     }
 }
 
@@ -478,30 +441,14 @@ void AC_AutoTune_Heli::load_tuned_gains()
         attitude_control->set_accel_pitch_max_cdss(0.0f);
     }
     if (roll_enabled()) {
-        attitude_control->get_rate_roll_pid().kP(tune_roll_rp);
-        attitude_control->get_rate_roll_pid().kI(tune_roll_rff*AUTOTUNE_FFI_RATIO_FINAL);
-        attitude_control->get_rate_roll_pid().kD(tune_roll_rd);
-        attitude_control->get_rate_roll_pid().ff(tune_roll_rff);
-        attitude_control->get_angle_roll_p().kP(tune_roll_sp);
-        attitude_control->set_accel_roll_max_cdss(tune_roll_accel);
+        load_gain_set(ROLL, tune_roll_rp, tune_roll_rff*AUTOTUNE_FFI_RATIO_FINAL, tune_roll_rd, tune_roll_rff, tune_roll_sp, tune_roll_accel, orig_roll_fltt, 0.0f, orig_roll_smax);
     }
     if (pitch_enabled()) {
-        attitude_control->get_rate_pitch_pid().kP(tune_pitch_rp);
-        attitude_control->get_rate_pitch_pid().kI(tune_pitch_rff*AUTOTUNE_FFI_RATIO_FINAL);
-        attitude_control->get_rate_pitch_pid().kD(tune_pitch_rd);
-        attitude_control->get_rate_pitch_pid().ff(tune_pitch_rff);
-        attitude_control->get_angle_pitch_p().kP(tune_pitch_sp);
-        attitude_control->set_accel_pitch_max_cdss(tune_pitch_accel);
+        load_gain_set(PITCH, tune_pitch_rp, tune_pitch_rff*AUTOTUNE_FFI_RATIO_FINAL, tune_pitch_rd, tune_pitch_rff, tune_pitch_sp, tune_pitch_accel, orig_pitch_fltt, 0.0f, orig_pitch_smax);
     }
     if (yaw_enabled()) {
         if (!is_zero(tune_yaw_rp)) {
-            attitude_control->get_rate_yaw_pid().kP(tune_yaw_rp);
-            attitude_control->get_rate_yaw_pid().kI(tune_yaw_rp*AUTOTUNE_YAW_PI_RATIO_FINAL);
-            attitude_control->get_rate_yaw_pid().kD(tune_yaw_rd);
-            attitude_control->get_rate_yaw_pid().ff(tune_yaw_rff);
-            attitude_control->get_rate_yaw_pid().filt_E_hz(tune_yaw_rLPF);
-            attitude_control->get_angle_yaw_p().kP(tune_yaw_sp);
-            attitude_control->set_accel_yaw_max_cdss(tune_yaw_accel);
+            load_gain_set(YAW, tune_yaw_rp, tune_yaw_rp*AUTOTUNE_YAW_PI_RATIO_FINAL, tune_yaw_rd, tune_yaw_rff, tune_yaw_sp, tune_yaw_accel, orig_yaw_fltt, tune_yaw_rLPF, orig_yaw_smax);
         }
     }
 }
@@ -514,35 +461,13 @@ void AC_AutoTune_Heli::load_intra_test_gains()
     // sanity check the gains
     attitude_control->bf_feedforward(true);
     if (roll_enabled()) {
-        attitude_control->get_rate_roll_pid().kP(orig_roll_rp);
-        attitude_control->get_rate_roll_pid().kI(orig_roll_rff * AUTOTUNE_FFI_RATIO_FOR_TESTING);
-        attitude_control->get_rate_roll_pid().kD(orig_roll_rd);
-        attitude_control->get_rate_roll_pid().ff(orig_roll_rff);
-        attitude_control->get_rate_roll_pid().filt_T_hz(orig_roll_fltt);
-        attitude_control->get_rate_roll_pid().slew_limit(orig_roll_smax);
-        attitude_control->get_angle_roll_p().kP(orig_roll_sp);
-        attitude_control->set_accel_roll_max_cdss(orig_roll_accel);
+        load_gain_set(ROLL, orig_roll_rp, orig_roll_rff * AUTOTUNE_FFI_RATIO_FOR_TESTING, orig_roll_rd, orig_roll_rff, orig_roll_sp, orig_roll_accel, orig_roll_fltt, 0.0f, orig_roll_smax);
     }
     if (pitch_enabled()) {
-        attitude_control->get_rate_pitch_pid().kP(orig_pitch_rp);
-        attitude_control->get_rate_pitch_pid().kI(orig_pitch_rff * AUTOTUNE_FFI_RATIO_FOR_TESTING);
-        attitude_control->get_rate_pitch_pid().kD(orig_pitch_rd);
-        attitude_control->get_rate_pitch_pid().ff(orig_pitch_rff);
-        attitude_control->get_rate_pitch_pid().filt_T_hz(orig_pitch_fltt);
-        attitude_control->get_rate_pitch_pid().slew_limit(orig_pitch_smax);
-        attitude_control->get_angle_pitch_p().kP(orig_pitch_sp);
-        attitude_control->set_accel_pitch_max_cdss(orig_pitch_accel);
+        load_gain_set(PITCH, orig_pitch_rp, orig_pitch_rff * AUTOTUNE_FFI_RATIO_FOR_TESTING, orig_pitch_rd, orig_pitch_rff, orig_pitch_sp, orig_pitch_accel, orig_pitch_fltt, 0.0f, orig_pitch_smax);
     }
     if (yaw_enabled()) {
-        attitude_control->get_rate_yaw_pid().kP(orig_yaw_rp);
-        attitude_control->get_rate_yaw_pid().kI(orig_yaw_rp*AUTOTUNE_PI_RATIO_FOR_TESTING);
-        attitude_control->get_rate_yaw_pid().kD(orig_yaw_rd);
-        attitude_control->get_rate_yaw_pid().ff(orig_yaw_rff);
-        attitude_control->get_rate_yaw_pid().filt_T_hz(orig_yaw_fltt);
-        attitude_control->get_rate_yaw_pid().slew_limit(orig_yaw_smax);
-        attitude_control->get_rate_yaw_pid().filt_E_hz(orig_yaw_rLPF);
-        attitude_control->get_angle_yaw_p().kP(orig_yaw_sp);
-        attitude_control->set_accel_yaw_max_cdss(orig_yaw_accel);
+        load_gain_set(YAW, orig_yaw_rp, orig_yaw_rp*AUTOTUNE_PI_RATIO_FOR_TESTING, orig_yaw_rd, orig_yaw_rff, orig_yaw_sp, orig_yaw_accel, orig_yaw_fltt, orig_yaw_rLPF, orig_yaw_smax);
     }
 }
 
@@ -550,55 +475,81 @@ void AC_AutoTune_Heli::load_intra_test_gains()
 // called by control_attitude() just before it beings testing a gain (i.e. just before it twitches)
 void AC_AutoTune_Heli::load_test_gains()
 {
+    float rate_p, rate_i, rate_d;
     switch (axis) {
     case ROLL:
         if (tune_type == SP_UP) {
-            attitude_control->get_rate_roll_pid().kI(orig_roll_ri);
+            rate_i = orig_roll_ri;
         } else {
             // freeze integrator to hold trim by making i term small during rate controller tuning
-            attitude_control->get_rate_roll_pid().kI(0.01f * orig_roll_ri);
+            rate_i = 0.01f * orig_roll_ri;
         }
         if (tune_type == MAX_GAINS && !is_zero(tune_roll_rff)) {
-            attitude_control->get_rate_roll_pid().kP(0.0f);
-            attitude_control->get_rate_roll_pid().kD(0.0f);
+            rate_p = 0.0f;
+            rate_d = 0.0f;
         } else {
-            attitude_control->get_rate_roll_pid().kP(tune_roll_rp);
-            attitude_control->get_rate_roll_pid().kD(tune_roll_rd);
+            rate_p = tune_roll_rp;
+            rate_d = tune_roll_rd;
         }
-        attitude_control->get_rate_roll_pid().ff(tune_roll_rff);
-        attitude_control->get_rate_roll_pid().filt_T_hz(orig_roll_fltt);
-        attitude_control->get_rate_roll_pid().slew_limit(0.0f);
-        attitude_control->get_angle_roll_p().kP(tune_roll_sp);
+        load_gain_set(ROLL, rate_p, rate_i, rate_d, tune_roll_rff, tune_roll_sp, tune_roll_accel, orig_roll_fltt, 0.0f, 0.0f);
         break;
     case PITCH:
         if (tune_type == SP_UP) {
-            attitude_control->get_rate_pitch_pid().kI(orig_pitch_ri);
+            rate_i = orig_pitch_ri;
         } else {
             // freeze integrator to hold trim by making i term small during rate controller tuning
-            attitude_control->get_rate_pitch_pid().kI(0.01f * orig_pitch_ri);
+            rate_i = 0.01f * orig_pitch_ri;
         }
         if (tune_type == MAX_GAINS && !is_zero(tune_pitch_rff)) {
-            attitude_control->get_rate_pitch_pid().kP(0.0f);
-            attitude_control->get_rate_pitch_pid().kD(0.0f);
+            rate_p = 0.0f;
+            rate_d = 0.0f;
         } else {
-            attitude_control->get_rate_pitch_pid().kP(tune_pitch_rp);
-            attitude_control->get_rate_pitch_pid().kD(tune_pitch_rd);
+            rate_p = tune_pitch_rp;
+            rate_d = tune_pitch_rd;
         }
-        attitude_control->get_rate_pitch_pid().ff(tune_pitch_rff);
-        attitude_control->get_rate_pitch_pid().filt_T_hz(orig_pitch_fltt);
-        attitude_control->get_rate_pitch_pid().slew_limit(0.0f);
-        attitude_control->get_angle_pitch_p().kP(tune_pitch_sp);
+        load_gain_set(PITCH, rate_p, rate_i, rate_d, tune_pitch_rff, tune_pitch_sp, tune_pitch_accel, orig_pitch_fltt, 0.0f, 0.0f);
         break;
     case YAW:
         // freeze integrator to hold trim by making i term small during rate controller tuning
-        attitude_control->get_rate_yaw_pid().kP(tune_yaw_rp);
-        attitude_control->get_rate_yaw_pid().kI(tune_yaw_rp*0.01f);
-        attitude_control->get_rate_yaw_pid().kD(tune_yaw_rd);
-        attitude_control->get_rate_yaw_pid().ff(tune_yaw_rff);
-        attitude_control->get_rate_yaw_pid().filt_E_hz(tune_yaw_rLPF);
-        attitude_control->get_rate_yaw_pid().filt_T_hz(orig_yaw_fltt);
-        attitude_control->get_rate_yaw_pid().slew_limit(0.0f);
-        attitude_control->get_angle_yaw_p().kP(tune_yaw_sp);
+        load_gain_set(YAW, tune_yaw_rp, tune_yaw_rp*0.01f, tune_yaw_rd, tune_yaw_rff, tune_yaw_sp, tune_yaw_accel, orig_yaw_fltt, tune_yaw_rLPF, 0.0f);
+        break;
+    }
+}
+
+// load gains
+void AC_AutoTune_Heli::load_gain_set(AxisType s_axis, float rate_p, float rate_i, float rate_d, float rate_ff, float angle_p, float max_accel, float rate_fltt, float rate_flte, float smax)
+{
+    switch (axis) {
+    case ROLL:
+        attitude_control->get_rate_roll_pid().kP(rate_p);
+        attitude_control->get_rate_roll_pid().kI(rate_i);
+        attitude_control->get_rate_roll_pid().kD(rate_d);
+        attitude_control->get_rate_roll_pid().ff(rate_ff);
+        attitude_control->get_rate_roll_pid().filt_T_hz(rate_fltt);
+        attitude_control->get_rate_roll_pid().slew_limit(smax);
+        attitude_control->get_angle_roll_p().kP(angle_p);
+        attitude_control->set_accel_roll_max_cdss(max_accel);
+        break;
+    case PITCH:
+        attitude_control->get_rate_pitch_pid().kP(rate_p);
+        attitude_control->get_rate_pitch_pid().kI(rate_i);
+        attitude_control->get_rate_pitch_pid().kD(rate_d);
+        attitude_control->get_rate_pitch_pid().ff(rate_ff);
+        attitude_control->get_rate_pitch_pid().filt_T_hz(rate_fltt);
+        attitude_control->get_rate_pitch_pid().slew_limit(smax);
+        attitude_control->get_angle_pitch_p().kP(angle_p);
+        attitude_control->set_accel_pitch_max_cdss(max_accel);
+        break;
+    case YAW:
+        attitude_control->get_rate_yaw_pid().kP(rate_p);
+        attitude_control->get_rate_yaw_pid().kI(rate_i);
+        attitude_control->get_rate_yaw_pid().kD(rate_d);
+        attitude_control->get_rate_yaw_pid().ff(rate_ff);
+        attitude_control->get_rate_yaw_pid().filt_T_hz(rate_fltt);
+        attitude_control->get_rate_yaw_pid().slew_limit(smax);
+        attitude_control->get_rate_yaw_pid().filt_E_hz(rate_flte);
+        attitude_control->get_angle_yaw_p().kP(angle_p);
+        attitude_control->set_accel_yaw_max_cdss(max_accel);
         break;
     }
 }
@@ -620,21 +571,12 @@ void AC_AutoTune_Heli::save_tuning_gains()
 
     // sanity check the rate P values
     if ((axes_completed & AUTOTUNE_AXIS_BITMASK_ROLL) && roll_enabled()) {
-        // rate roll gains
-        attitude_control->get_rate_roll_pid().kP(tune_roll_rp);
-        attitude_control->get_rate_roll_pid().kI(tune_roll_rff*AUTOTUNE_FFI_RATIO_FINAL);
-        attitude_control->get_rate_roll_pid().kD(tune_roll_rd);
-        attitude_control->get_rate_roll_pid().ff(tune_roll_rff);
-        attitude_control->get_rate_roll_pid().filt_T_hz(orig_roll_fltt);
-        attitude_control->get_rate_roll_pid().slew_limit(orig_roll_smax);
+        load_gain_set(ROLL, tune_roll_rp, tune_roll_rff*AUTOTUNE_FFI_RATIO_FINAL, tune_roll_rd, tune_roll_rff, tune_roll_sp, tune_roll_accel, orig_roll_fltt, 0.0f, orig_roll_smax);
+        // save rate roll gains
         attitude_control->get_rate_roll_pid().save_gains();
 
-        // stabilize roll
-        attitude_control->get_angle_roll_p().kP(tune_roll_sp);
+        // save stabilize roll
         attitude_control->get_angle_roll_p().save_gains();
-
-        // acceleration roll
-        attitude_control->save_accel_roll_max_cdss(tune_roll_accel);
 
         // resave pids to originals in case the autotune is run again
         orig_roll_rp = attitude_control->get_rate_roll_pid().kP();
@@ -646,21 +588,12 @@ void AC_AutoTune_Heli::save_tuning_gains()
     }
 
     if ((axes_completed & AUTOTUNE_AXIS_BITMASK_PITCH) && pitch_enabled()) {
-        // rate pitch gains
-        attitude_control->get_rate_pitch_pid().kP(tune_pitch_rp);
-        attitude_control->get_rate_pitch_pid().kI(tune_pitch_rff*AUTOTUNE_FFI_RATIO_FINAL);
-        attitude_control->get_rate_pitch_pid().kD(tune_pitch_rd);
-        attitude_control->get_rate_pitch_pid().ff(tune_pitch_rff);
-        attitude_control->get_rate_pitch_pid().filt_T_hz(orig_pitch_fltt);
-        attitude_control->get_rate_pitch_pid().slew_limit(orig_pitch_smax);
+        load_gain_set(PITCH, tune_pitch_rp, tune_pitch_rff*AUTOTUNE_FFI_RATIO_FINAL, tune_pitch_rd, tune_pitch_rff, tune_pitch_sp, tune_pitch_accel, orig_pitch_fltt, 0.0f, orig_pitch_smax);
+        // save rate pitch gains
         attitude_control->get_rate_pitch_pid().save_gains();
 
-        // stabilize pitch
-        attitude_control->get_angle_pitch_p().kP(tune_pitch_sp);
+        // save stabilize pitch
         attitude_control->get_angle_pitch_p().save_gains();
-
-        // acceleration pitch
-        attitude_control->save_accel_pitch_max_cdss(tune_pitch_accel);
 
         // resave pids to originals in case the autotune is run again
         orig_pitch_rp = attitude_control->get_rate_pitch_pid().kP();
@@ -672,22 +605,12 @@ void AC_AutoTune_Heli::save_tuning_gains()
     }
 
     if ((axes_completed & AUTOTUNE_AXIS_BITMASK_YAW) && yaw_enabled() && !is_zero(tune_yaw_rp)) {
-        // rate yaw gains
-        attitude_control->get_rate_yaw_pid().kP(tune_yaw_rp);
-        attitude_control->get_rate_yaw_pid().kI(tune_yaw_rp*AUTOTUNE_YAW_PI_RATIO_FINAL);
-        attitude_control->get_rate_yaw_pid().kD(tune_yaw_rd);
-        attitude_control->get_rate_yaw_pid().ff(tune_yaw_rff);
-        attitude_control->get_rate_yaw_pid().filt_T_hz(orig_yaw_fltt);
-        attitude_control->get_rate_yaw_pid().slew_limit(orig_yaw_smax);
-        attitude_control->get_rate_yaw_pid().filt_E_hz(orig_yaw_rLPF);
+        load_gain_set(YAW, tune_yaw_rp, tune_yaw_rp*AUTOTUNE_YAW_PI_RATIO_FINAL, tune_yaw_rd, tune_yaw_rff, tune_yaw_sp, tune_yaw_accel, orig_yaw_fltt, orig_yaw_rLPF, orig_yaw_smax);
+        // save rate yaw gains
         attitude_control->get_rate_yaw_pid().save_gains();
 
-        // stabilize yaw
-        attitude_control->get_angle_yaw_p().kP(tune_yaw_sp);
+        // save stabilize yaw
         attitude_control->get_angle_yaw_p().save_gains();
-
-        // acceleration yaw
-        attitude_control->save_accel_yaw_max_cdss(tune_yaw_accel);
 
         // resave pids to originals in case the autotune is run again
         orig_yaw_rp = attitude_control->get_rate_yaw_pid().kP();
@@ -925,295 +848,21 @@ void AC_AutoTune_Heli::rate_ff_test_run(float max_angle_cd, float target_rate_cd
 
 }
 
-void AC_AutoTune_Heli::dwell_test_init(float start_frq, float filt_freq)
+void AC_AutoTune_Heli::dwell_test_init(float start_frq, float stop_frq, float filt_freq, DwellType dwell_type)
 {
+    dwell_start_time_ms = 0.0f;
+    settle_time = 200;
+
+    rotation_rate_filt.set_cutoff_frequency(filt_freq);
+    command_filt.set_cutoff_frequency(filt_freq);
+    target_rate_filt.set_cutoff_frequency(filt_freq);
+
     rotation_rate_filt.reset(0);
-    rotation_rate_filt.set_cutoff_frequency(filt_freq);
     command_filt.reset(0);
-    command_filt.set_cutoff_frequency(filt_freq);
     target_rate_filt.reset(0);
-    target_rate_filt.set_cutoff_frequency(filt_freq);
+    rotation_rate = 0.0f;
+    command_out = 0.0f;
     filt_target_rate = 0.0f;
-    dwell_start_time_ms = 0.0f;
-    settle_time = 200;
-    if (!is_equal(start_freq, stop_freq)) {
-        reset_sweep_variables();
-        curr_test_gain = 0.0f;
-        curr_test_phase = 0.0f;
-    }
-
-    // filter at lower frequency to remove steady state
-    filt_command_reading.set_cutoff_frequency(0.2f * start_frq);
-    filt_gyro_reading.set_cutoff_frequency(0.2f * start_frq);
-    filt_tgt_rate_reading.set_cutoff_frequency(0.2f * start_frq);
-    filt_pit_roll_cd.set_cutoff_frequency(0.2f * start_frq);
-    filt_heading_error_cd.set_cutoff_frequency(0.2f * start_frq);
-    filt_att_fdbk_from_velxy_cd.set_cutoff_frequency(0.2f * start_frq);
-
-    // save the trim output from PID controller
-    float ff_term = 0.0f;
-    float p_term = 0.0f;
-    switch (axis) {
-    case ROLL:
-        trim_meas_rate = ahrs_view->get_gyro().x;
-        ff_term = attitude_control->get_rate_roll_pid().get_ff();
-        p_term = attitude_control->get_rate_roll_pid().get_p();
-        break;
-    case PITCH:
-        trim_meas_rate = ahrs_view->get_gyro().y;
-        ff_term = attitude_control->get_rate_pitch_pid().get_ff();
-        p_term = attitude_control->get_rate_pitch_pid().get_p();
-        break;
-    case YAW:
-        trim_meas_rate = ahrs_view->get_gyro().z;
-        ff_term = attitude_control->get_rate_yaw_pid().get_ff();
-        p_term = attitude_control->get_rate_yaw_pid().get_p();
-        break;
-    }
-    trim_pff_out = ff_term + p_term;
-}
-
-void AC_AutoTune_Heli::dwell_test_run(uint8_t freq_resp_input, float start_frq, float stop_frq, float &dwell_gain, float &dwell_phase)
-{
-    float gyro_reading = 0.0f;
-    float command_reading = 0.0f;
-    float tgt_rate_reading = 0.0f;
-    float tgt_attitude = 2.5f * 0.01745f;
-    const uint32_t now = AP_HAL::millis();
-    float target_rate_cds;
-    float sweep_time_ms = 23000;
-    const float att_hold_gain = 4.5f;
-    Vector3f attitude_cd;
-
-    float dwell_freq = start_frq;
-    float cycle_time_ms = 0;
-    if (!is_zero(dwell_freq)) {
-        cycle_time_ms = 1000.0f * 2.0f * M_PI / dwell_freq;
-    }
-
-    attitude_cd = Vector3f((float)ahrs_view->roll_sensor, (float)ahrs_view->pitch_sensor, (float)ahrs_view->yaw_sensor);
-    Vector3f velocity_ned, velocity_bf;
-    if (ahrs_view->get_velocity_NED(velocity_ned)) {
-        velocity_bf.x = velocity_ned.x * ahrs_view->cos_yaw() + velocity_ned.y * ahrs_view->sin_yaw();
-        velocity_bf.y = -velocity_ned.x * ahrs_view->sin_yaw() + velocity_ned.y * ahrs_view->cos_yaw();
-    }
-
-    // keep controller from requesting too high of a rate
-    float target_rate_mag_cds = dwell_freq * tgt_attitude * 5730.0f;
-    if (target_rate_mag_cds > 5000.0f) {
-        target_rate_mag_cds = 5000.0f;
-    }
-    if (settle_time == 0) {
-        // give gentler start for the dwell
-        if ((float)(now - dwell_start_time_ms) < 0.5f * cycle_time_ms) {
-            target_rate_cds = -0.5f * target_rate_mag_cds * sinf(dwell_freq * (now - dwell_start_time_ms) * 0.001);
-        } else {
-            if (is_equal(start_frq,stop_frq)) {
-                target_rate_cds = - target_rate_mag_cds * cosf(dwell_freq * (now - dwell_start_time_ms - 0.25f * cycle_time_ms) * 0.001);
-            } else {
-                target_rate_cds = waveform((now - dwell_start_time_ms - 0.5f * cycle_time_ms) * 0.001, (sweep_time_ms - 0.5f * cycle_time_ms) * 0.001f, target_rate_mag_cds, start_frq, stop_frq);
-                dwell_freq = waveform_freq_rads;
-            }
-        }
-        filt_pit_roll_cd.apply(Vector2f(attitude_cd.x,attitude_cd.y), AP::scheduler().get_loop_period_s());
-        filt_heading_error_cd.apply(wrap_180_cd(trim_attitude_cd.z - attitude_cd.z), AP::scheduler().get_loop_period_s());
-        Vector2f att_fdbk = Vector2f(-5730.0f * vel_hold_gain * velocity_bf.y, 5730.0f * vel_hold_gain * velocity_bf.x);
-        filt_att_fdbk_from_velxy_cd.apply(att_fdbk, AP::scheduler().get_loop_period_s());
-    } else {
-        target_rate_cds = 0.0f;
-        settle_time--;
-        dwell_start_time_ms = now;
-        trim_command = command_out;
-        trim_attitude_cd = attitude_cd;
-        filt_pit_roll_cd.reset(Vector2f(attitude_cd.x,attitude_cd.y));
-        filt_heading_error_cd.reset(0.0f);
-        filt_att_fdbk_from_velxy_cd.reset(Vector2f(0.0f,0.0f));
-    }
-
-    // limit rate correction for position hold
-    Vector3f trim_rate_cds;
-    trim_rate_cds.x = att_hold_gain * ((trim_attitude_cd.x + filt_att_fdbk_from_velxy_cd.get().x) - filt_pit_roll_cd.get().x);
-    trim_rate_cds.y = att_hold_gain * ((trim_attitude_cd.y + filt_att_fdbk_from_velxy_cd.get().y) - filt_pit_roll_cd.get().y);
-    trim_rate_cds.z = att_hold_gain * filt_heading_error_cd.get();
-    trim_rate_cds.x = constrain_float(trim_rate_cds.x, -15000.0f, 15000.0f);
-    trim_rate_cds.y = constrain_float(trim_rate_cds.y, -15000.0f, 15000.0f);
-    trim_rate_cds.z = constrain_float(trim_rate_cds.z, -15000.0f, 15000.0f);
-
-    switch (axis) {
-    case ROLL:
-        gyro_reading = ahrs_view->get_gyro().x;
-        command_reading = motors->get_roll();
-        tgt_rate_reading = attitude_control->rate_bf_targets().x;
-        if (settle_time == 0) {
-            float ff_rate_contr = 0.0f;
-            if (tune_roll_rff > 0.0f) {
-                ff_rate_contr = 5730.0f * trim_command / tune_roll_rff;
-            }
-            trim_rate_cds.x += ff_rate_contr;
-            attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, trim_rate_cds.y, 0.0f);
-            attitude_control->rate_bf_roll_target(target_rate_cds + trim_rate_cds.x);
-        } else {
-            attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, 0.0f, 0.0f);
-            if (!is_zero(attitude_control->get_rate_roll_pid().ff() + attitude_control->get_rate_roll_pid().kP())) {
-                float trim_tgt_rate_cds = 5730.0f * (trim_pff_out + trim_meas_rate * attitude_control->get_rate_roll_pid().kP()) / (attitude_control->get_rate_roll_pid().ff() + attitude_control->get_rate_roll_pid().kP());
-                attitude_control->rate_bf_roll_target(trim_tgt_rate_cds);
-            }
-        }
-        break;
-    case PITCH:
-        gyro_reading = ahrs_view->get_gyro().y;
-        command_reading = motors->get_pitch();
-        tgt_rate_reading = attitude_control->rate_bf_targets().y;
-        if (settle_time == 0) {
-            float ff_rate_contr = 0.0f;
-            if (tune_pitch_rff > 0.0f) {
-                ff_rate_contr = 5730.0f * trim_command / tune_pitch_rff;
-            }
-            trim_rate_cds.y += ff_rate_contr;
-            attitude_control->input_rate_bf_roll_pitch_yaw(trim_rate_cds.x, 0.0f, 0.0f);
-            attitude_control->rate_bf_pitch_target(target_rate_cds + trim_rate_cds.y);
-        } else {
-            attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, 0.0f, 0.0f);
-            if (!is_zero(attitude_control->get_rate_pitch_pid().ff() + attitude_control->get_rate_pitch_pid().kP())) {
-                float trim_tgt_rate_cds = 5730.0f * (trim_pff_out + trim_meas_rate * attitude_control->get_rate_pitch_pid().kP()) / (attitude_control->get_rate_pitch_pid().ff() + attitude_control->get_rate_pitch_pid().kP());
-                attitude_control->rate_bf_pitch_target(trim_tgt_rate_cds);
-            }
-        }
-        break;
-    case YAW:
-        gyro_reading = ahrs_view->get_gyro().z;
-        command_reading = motors->get_yaw();
-        tgt_rate_reading = attitude_control->rate_bf_targets().z;
-        if (settle_time == 0) {
-            float rp_rate_contr = 0.0f;
-            if (tune_yaw_rp > 0.0f) {
-                rp_rate_contr = 5730.0f * trim_command / tune_yaw_rp;
-            }
-            trim_rate_cds.z += rp_rate_contr;
-            attitude_control->input_rate_bf_roll_pitch_yaw(trim_rate_cds.x, trim_rate_cds.y, 0.0f);
-            attitude_control->rate_bf_yaw_target(target_rate_cds + trim_rate_cds.z);
-        } else {
-            attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, 0.0f, 0.0f);
-            if (!is_zero(attitude_control->get_rate_yaw_pid().ff() + attitude_control->get_rate_yaw_pid().kP())) {
-                float trim_tgt_rate_cds = 5730.0f * (trim_pff_out + trim_meas_rate * attitude_control->get_rate_yaw_pid().kP()) / (attitude_control->get_rate_yaw_pid().ff() + attitude_control->get_rate_yaw_pid().kP());
-                attitude_control->rate_bf_yaw_target(trim_tgt_rate_cds);
-            }
-        }
-        break;
-    }
-
-    if (settle_time == 0) {
-        filt_command_reading.apply(command_reading, AP::scheduler().get_loop_period_s());
-        filt_gyro_reading.apply(gyro_reading, AP::scheduler().get_loop_period_s());
-        filt_tgt_rate_reading.apply(tgt_rate_reading, AP::scheduler().get_loop_period_s());
-    } else {
-        filt_command_reading.reset(command_reading);
-        filt_gyro_reading.reset(gyro_reading);
-        filt_tgt_rate_reading.reset(tgt_rate_reading);
-    }
-
-    // looks at gain and phase of input rate to output rate
-    rotation_rate = rotation_rate_filt.apply((gyro_reading - filt_gyro_reading.get()),
-                    AP::scheduler().get_loop_period_s());
-    filt_target_rate = target_rate_filt.apply((tgt_rate_reading - filt_tgt_rate_reading.get()),
-                       AP::scheduler().get_loop_period_s());
-    command_out = command_filt.apply((command_reading - filt_command_reading.get()),
-                                     AP::scheduler().get_loop_period_s());
-
-    // wait for dwell to start before determining gain and phase or just start if sweep
-    if ((float)(now - dwell_start_time_ms) > 6.25f * cycle_time_ms || (!is_equal(start_frq,stop_frq) && settle_time == 0)) {
-        if (freq_resp_input == 1) {
-            freqresp_rate.update(command_out,filt_target_rate,rotation_rate, dwell_freq);
-        } else {
-            freqresp_rate.update(command_out,command_out,rotation_rate, dwell_freq);
-        }
-        if (freqresp_rate.is_cycle_complete()) {
-            if (!is_equal(start_frq,stop_frq)) {
-                curr_test_freq = freqresp_rate.get_freq();
-                curr_test_gain = freqresp_rate.get_gain();
-                curr_test_phase = freqresp_rate.get_phase();
-                // reset cycle_complete to allow indication of next cycle
-                freqresp_rate.reset_cycle_complete();
-                // log sweep data
-                Log_AutoTuneSweep();
-            } else {
-                dwell_gain = freqresp_rate.get_gain();
-                dwell_phase = freqresp_rate.get_phase();
-            }
-
-        }
-    }
-
-    // set sweep data if a frequency sweep is being conducted
-    if (!is_equal(start_frq,stop_frq) && (float)(now - dwell_start_time_ms) > 2.5f * cycle_time_ms) {
-        // track sweep phase to prevent capturing 180 deg and 270 deg data after phase has wrapped.
-        if (curr_test_phase > 180.0f && sweep.progress == 0) {
-            sweep.progress = 1;
-        } else if (curr_test_phase > 270.0f && sweep.progress == 1) {
-            sweep.progress = 2;
-        }
-        if (curr_test_phase <= 160.0f && curr_test_phase >= 150.0f && sweep.progress == 0) {
-            sweep.ph180_freq = curr_test_freq;
-            sweep.ph180_gain = curr_test_gain;
-            sweep.ph180_phase = curr_test_phase;
-        }
-        if (curr_test_phase <= 250.0f && curr_test_phase >= 240.0f && sweep.progress == 1) {
-            sweep.ph270_freq = curr_test_freq;
-            sweep.ph270_gain = curr_test_gain;
-            sweep.ph270_phase = curr_test_phase;
-        }
-        if (curr_test_gain > sweep.maxgain_gain) {
-            sweep.maxgain_gain = curr_test_gain;
-            sweep.maxgain_freq = curr_test_freq;
-            sweep.maxgain_phase = curr_test_phase;
-        }
-        if (now - step_start_time_ms >= sweep_time_ms + 200) {
-            // we have passed the maximum stop time
-            step = UPDATE_GAINS;
-        }
-
-    } else {
-        if (now - step_start_time_ms >= step_time_limit_ms || freqresp_rate.is_cycle_complete()) {
-            // we have passed the maximum stop time
-            step = UPDATE_GAINS;
-        }
-    }
-}
-
-void AC_AutoTune_Heli::angle_dwell_test_init(float start_frq, float filt_freq)
-{
-    rotation_rate_filt.set_cutoff_frequency(filt_freq);
-    command_filt.set_cutoff_frequency(filt_freq);
-    target_rate_filt.set_cutoff_frequency(filt_freq);
-    dwell_start_time_ms = 0.0f;
-    settle_time = 200;
-    switch (axis) {
-    case ROLL:
-        rotation_rate_filt.reset(((float)ahrs_view->roll_sensor) / 5730.0f);
-        command_filt.reset(motors->get_roll());
-        target_rate_filt.reset(((float)attitude_control->get_att_target_euler_cd().x) / 5730.0f);
-        rotation_rate = ((float)ahrs_view->roll_sensor) / 5730.0f;
-        command_out = motors->get_roll();
-        filt_target_rate = ((float)attitude_control->get_att_target_euler_cd().x) / 5730.0f;
-        break;
-    case PITCH:
-        rotation_rate_filt.reset(((float)ahrs_view->pitch_sensor) / 5730.0f);
-        command_filt.reset(motors->get_pitch());
-        target_rate_filt.reset(((float)attitude_control->get_att_target_euler_cd().y) / 5730.0f);
-        rotation_rate = ((float)ahrs_view->pitch_sensor) / 5730.0f;
-        command_out = motors->get_pitch();
-        filt_target_rate = ((float)attitude_control->get_att_target_euler_cd().y) / 5730.0f;
-        break;
-    case YAW:
-        // yaw angle will be centered on zero by removing trim heading
-        rotation_rate_filt.reset(0.0f);
-        command_filt.reset(motors->get_yaw());
-        target_rate_filt.reset(0.0f);
-        rotation_rate = 0.0f;
-        command_out = motors->get_yaw();
-        filt_target_rate = 0.0f;
-        break;
-    }
 
     // filter at lower frequency to remove steady state
     filt_command_reading.set_cutoff_frequency(0.2f * start_frq);
@@ -1221,32 +870,74 @@ void AC_AutoTune_Heli::angle_dwell_test_init(float start_frq, float filt_freq)
     filt_tgt_rate_reading.set_cutoff_frequency(0.2f * start_frq);
     filt_att_fdbk_from_velxy_cd.set_cutoff_frequency(0.2f * start_frq);
 
-    if (!is_equal(start_freq, stop_freq)) {
-        reset_sweep_variables();
-        curr_test_gain = 0.0f;
-        curr_test_phase = 0.0f;
+    if (dwell_type == RATE) {
+        filt_pit_roll_cd.set_cutoff_frequency(0.2f * start_frq);
+        filt_heading_error_cd.set_cutoff_frequency(0.2f * start_frq);
+
+        // save the trim output from PID controller
+        float ff_term = 0.0f;
+        float p_term = 0.0f;
+        switch (axis) {
+        case ROLL:
+            trim_meas_rate = ahrs_view->get_gyro().x;
+            ff_term = attitude_control->get_rate_roll_pid().get_ff();
+            p_term = attitude_control->get_rate_roll_pid().get_p();
+            break;
+        case PITCH:
+            trim_meas_rate = ahrs_view->get_gyro().y;
+            ff_term = attitude_control->get_rate_pitch_pid().get_ff();
+            p_term = attitude_control->get_rate_pitch_pid().get_p();
+            break;
+        case YAW:
+            trim_meas_rate = ahrs_view->get_gyro().z;
+            ff_term = attitude_control->get_rate_yaw_pid().get_ff();
+            p_term = attitude_control->get_rate_yaw_pid().get_p();
+            break;
+        }
+        trim_pff_out = ff_term + p_term;
     }
+
+    if (!is_equal(start_frq, stop_frq)) {
+        reset_sweep_variables();
+        curr_test.gain = 0.0f;
+        curr_test.phase = 0.0f;
+    }
+
+    chirp_input.init(sweep_time_ms * 0.001f, start_frq / M_2PI, stop_frq / M_2PI, 0.0f, 0.0001f * sweep_time_ms, 0.0f);
+
 }
 
-void AC_AutoTune_Heli::angle_dwell_test_run(float start_frq, float stop_frq, float &dwell_gain, float &dwell_phase)
+void AC_AutoTune_Heli::dwell_test_run(uint8_t freq_resp_input, float start_frq, float stop_frq, float &dwell_gain, float &dwell_phase, DwellType dwell_type)
 {
     float gyro_reading = 0.0f;
     float command_reading = 0.0f;
     float tgt_rate_reading = 0.0f;
-    float tgt_attitude = 5.0f * 0.01745f;
+    float tgt_attitude;
     const uint32_t now = AP_HAL::millis();
     float target_angle_cd;
-    float sweep_time_ms = 23000;
+    float target_rate_cds;
     float dwell_freq = start_frq;
-
-    // adjust target attitude based on input_tc so amplitude decrease with increased frequency is minimized
-    const float freq_co = 1.0f / attitude_control->get_input_tc();
-    const float added_ampl = (safe_sqrt(powf(dwell_freq,2.0) + powf(freq_co,2.0)) / freq_co) - 1.0f;
-    tgt_attitude = constrain_float(0.08725f * (1.0f + 0.2f * added_ampl), 0.08725f, 0.5235f);
+    float target_rate_mag_cds;
+    const float att_hold_gain = 4.5f;
 
     float cycle_time_ms = 0;
     if (!is_zero(dwell_freq)) {
-        cycle_time_ms = 1000.0f * 6.28f / dwell_freq;
+        cycle_time_ms = 1000.0f * M_2PI / dwell_freq;
+    }
+
+    if (dwell_type == RATE) {
+        // keep controller from requesting too high of a rate
+        tgt_attitude = 2.5f * 0.01745f;
+        target_rate_mag_cds = dwell_freq * tgt_attitude * 5730.0f;
+        if (target_rate_mag_cds > 5000.0f) {
+            target_rate_mag_cds = 5000.0f;
+        }
+    } else {
+        tgt_attitude = 5.0f * 0.01745f;
+        // adjust target attitude based on input_tc so amplitude decrease with increased frequency is minimized
+        const float freq_co = 1.0f / attitude_control->get_input_tc();
+        const float added_ampl = (safe_sqrt(powf(dwell_freq,2.0) + powf(freq_co,2.0)) / freq_co) - 1.0f;
+        tgt_attitude = constrain_float(0.08725f * (1.0f + 0.2f * added_ampl), 0.08725f, 0.5235f);
     }
 
     // body frame calculation of velocity
@@ -1256,51 +947,132 @@ void AC_AutoTune_Heli::angle_dwell_test_run(float start_frq, float stop_frq, flo
         velocity_bf.y = -velocity_ned.x * ahrs_view->sin_yaw() + velocity_ned.y * ahrs_view->cos_yaw();
     }
 
+    Vector3f attitude_cd = Vector3f((float)ahrs_view->roll_sensor, (float)ahrs_view->pitch_sensor, (float)ahrs_view->yaw_sensor);
     if (settle_time == 0) {
-        // give gentler start for the dwell
-        if ((float)(now - dwell_start_time_ms) < 0.5f * cycle_time_ms) {
-            target_angle_cd = 0.5f * tgt_attitude * 5730.0f * (cosf(dwell_freq * (now - dwell_start_time_ms) * 0.001) - 1.0f);
+        if (dwell_type == RATE) {
+            target_rate_cds = -chirp_input.update((now - dwell_start_time_ms) * 0.001, target_rate_mag_cds);
+            filt_pit_roll_cd.apply(Vector2f(attitude_cd.x,attitude_cd.y), AP::scheduler().get_loop_period_s());
+            filt_heading_error_cd.apply(wrap_180_cd(trim_attitude_cd.z - attitude_cd.z), AP::scheduler().get_loop_period_s());
         } else {
-            if (is_equal(start_frq,stop_frq)) {
-                target_angle_cd = -tgt_attitude * 5730.0f * sinf(dwell_freq * (now - dwell_start_time_ms - 0.25f * cycle_time_ms) * 0.001);
-            } else {
-                target_angle_cd = -waveform((now - dwell_start_time_ms - 0.25f * cycle_time_ms) * 0.001, (sweep_time_ms - 0.25f * cycle_time_ms) * 0.001f, tgt_attitude * 5730.0f, start_frq, stop_frq);
-                dwell_freq = waveform_freq_rads;
-            }
+            target_angle_cd = -chirp_input.update((now - dwell_start_time_ms) * 0.001, tgt_attitude * 5730.0f);
         }
-        Vector2f att_fdbk = Vector2f(-5730.0f * vel_hold_gain * velocity_bf.y, 5730.0f * vel_hold_gain * velocity_bf.x);
+        const Vector2f att_fdbk {
+            -5730.0f * vel_hold_gain * velocity_bf.y,
+            5730.0f * vel_hold_gain * velocity_bf.x
+        };
         filt_att_fdbk_from_velxy_cd.apply(att_fdbk, AP::scheduler().get_loop_period_s());
+        dwell_freq = chirp_input.get_frequency_rads();
     } else {
-        target_angle_cd = 0.0f;
-        trim_yaw_tgt_reading = (float)attitude_control->get_att_target_euler_cd().z;
-        trim_yaw_heading_reading = (float)ahrs_view->yaw_sensor;
-        settle_time--;
+        if (dwell_type == RATE) {
+            target_rate_cds = 0.0f;
+            trim_command = command_out;
+            trim_attitude_cd = attitude_cd;
+            filt_pit_roll_cd.reset(Vector2f(attitude_cd.x,attitude_cd.y));
+            filt_heading_error_cd.reset(0.0f);
+        } else {
+            target_angle_cd = 0.0f;
+            trim_yaw_tgt_reading = (float)attitude_control->get_att_target_euler_cd().z;
+            trim_yaw_heading_reading = (float)ahrs_view->yaw_sensor;
+        }
         dwell_start_time_ms = now;
         filt_att_fdbk_from_velxy_cd.reset(Vector2f(0.0f,0.0f));
+        settle_time--;
     }
 
-    Vector2f trim_angle_cd;
-    trim_angle_cd.x = constrain_float(filt_att_fdbk_from_velxy_cd.get().x, -2000.0f, 2000.0f);
-    trim_angle_cd.y = constrain_float(filt_att_fdbk_from_velxy_cd.get().y, -2000.0f, 2000.0f);
-    switch (axis) {
-    case ROLL:
-        attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(target_angle_cd + trim_angle_cd.x, trim_angle_cd.y, 0.0f);
-        command_reading = motors->get_roll();
-        tgt_rate_reading = ((float)attitude_control->get_att_target_euler_cd().x) / 5730.0f;
-        gyro_reading = ((float)ahrs_view->roll_sensor) / 5730.0f;
-        break;
-    case PITCH:
-        attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(trim_angle_cd.x, target_angle_cd + trim_angle_cd.y, 0.0f);
-        command_reading = motors->get_pitch();
-        tgt_rate_reading = ((float)attitude_control->get_att_target_euler_cd().y) / 5730.0f;
-        gyro_reading = ((float)ahrs_view->pitch_sensor) / 5730.0f;
-        break;
-    case YAW:
-        command_reading = motors->get_yaw();
-        tgt_rate_reading = (wrap_180_cd((float)attitude_control->get_att_target_euler_cd().z - trim_yaw_tgt_reading)) / 5730.0f;
-        gyro_reading = (wrap_180_cd((float)ahrs_view->yaw_sensor - trim_yaw_heading_reading)) / 5730.0f;
-        attitude_control->input_euler_angle_roll_pitch_yaw(trim_angle_cd.x, trim_angle_cd.y, wrap_180_cd(trim_yaw_tgt_reading + target_angle_cd), false);
-        break;
+    if (dwell_type == RATE) {
+        // limit rate correction for position hold
+        Vector3f trim_rate_cds {
+            constrain_float(att_hold_gain * ((trim_attitude_cd.x + filt_att_fdbk_from_velxy_cd.get().x) - filt_pit_roll_cd.get().x), -15000.0f, 15000.0f),
+            constrain_float(att_hold_gain * ((trim_attitude_cd.y + filt_att_fdbk_from_velxy_cd.get().y) - filt_pit_roll_cd.get().y), -15000.0f, 15000.0f),
+            constrain_float(att_hold_gain * filt_heading_error_cd.get(), -15000.0f, 15000.0f)
+        };
+        switch (axis) {
+        case ROLL:
+            gyro_reading = ahrs_view->get_gyro().x;
+            command_reading = motors->get_roll();
+            tgt_rate_reading = attitude_control->rate_bf_targets().x;
+            if (settle_time == 0) {
+                float ff_rate_contr = 0.0f;
+                if (tune_roll_rff > 0.0f) {
+                    ff_rate_contr = 5730.0f * trim_command / tune_roll_rff;
+                }
+                trim_rate_cds.x += ff_rate_contr;
+                attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, trim_rate_cds.y, 0.0f);
+                attitude_control->rate_bf_roll_target(target_rate_cds + trim_rate_cds.x);
+            } else {
+                attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, 0.0f, 0.0f);
+                if (!is_zero(attitude_control->get_rate_roll_pid().ff() + attitude_control->get_rate_roll_pid().kP())) {
+                    float trim_tgt_rate_cds = 5730.0f * (trim_pff_out + trim_meas_rate * attitude_control->get_rate_roll_pid().kP()) / (attitude_control->get_rate_roll_pid().ff() + attitude_control->get_rate_roll_pid().kP());
+                    attitude_control->rate_bf_roll_target(trim_tgt_rate_cds);
+                }
+            }
+            break;
+        case PITCH:
+            gyro_reading = ahrs_view->get_gyro().y;
+            command_reading = motors->get_pitch();
+            tgt_rate_reading = attitude_control->rate_bf_targets().y;
+            if (settle_time == 0) {
+                float ff_rate_contr = 0.0f;
+                if (tune_pitch_rff > 0.0f) {
+                    ff_rate_contr = 5730.0f * trim_command / tune_pitch_rff;
+                }
+                trim_rate_cds.y += ff_rate_contr;
+                attitude_control->input_rate_bf_roll_pitch_yaw(trim_rate_cds.x, 0.0f, 0.0f);
+                attitude_control->rate_bf_pitch_target(target_rate_cds + trim_rate_cds.y);
+            } else {
+                attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, 0.0f, 0.0f);
+                if (!is_zero(attitude_control->get_rate_pitch_pid().ff() + attitude_control->get_rate_pitch_pid().kP())) {
+                    float trim_tgt_rate_cds = 5730.0f * (trim_pff_out + trim_meas_rate * attitude_control->get_rate_pitch_pid().kP()) / (attitude_control->get_rate_pitch_pid().ff() + attitude_control->get_rate_pitch_pid().kP());
+                    attitude_control->rate_bf_pitch_target(trim_tgt_rate_cds);
+                }
+            }
+            break;
+        case YAW:
+            gyro_reading = ahrs_view->get_gyro().z;
+            command_reading = motors->get_yaw();
+            tgt_rate_reading = attitude_control->rate_bf_targets().z;
+            if (settle_time == 0) {
+                float rp_rate_contr = 0.0f;
+                if (tune_yaw_rp > 0.0f) {
+                    rp_rate_contr = 5730.0f * trim_command / tune_yaw_rp;
+                }
+                trim_rate_cds.z += rp_rate_contr;
+                attitude_control->input_rate_bf_roll_pitch_yaw(trim_rate_cds.x, trim_rate_cds.y, 0.0f);
+                attitude_control->rate_bf_yaw_target(target_rate_cds + trim_rate_cds.z);
+            } else {
+                attitude_control->input_rate_bf_roll_pitch_yaw(0.0f, 0.0f, 0.0f);
+                if (!is_zero(attitude_control->get_rate_yaw_pid().ff() + attitude_control->get_rate_yaw_pid().kP())) {
+                    float trim_tgt_rate_cds = 5730.0f * (trim_pff_out + trim_meas_rate * attitude_control->get_rate_yaw_pid().kP()) / (attitude_control->get_rate_yaw_pid().ff() + attitude_control->get_rate_yaw_pid().kP());
+                    attitude_control->rate_bf_yaw_target(trim_tgt_rate_cds);
+                }
+            }
+            break;
+        }
+    } else {
+        const Vector2f trim_angle_cd {
+            constrain_float(filt_att_fdbk_from_velxy_cd.get().x, -2000.0f, 2000.0f),
+            constrain_float(filt_att_fdbk_from_velxy_cd.get().y, -2000.0f, 2000.0f)
+        };
+        switch (axis) {
+        case ROLL:
+            attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(target_angle_cd + trim_angle_cd.x, trim_angle_cd.y, 0.0f);
+            command_reading = motors->get_roll();
+            tgt_rate_reading = ((float)attitude_control->get_att_target_euler_cd().x) / 5730.0f;
+            gyro_reading = ((float)ahrs_view->roll_sensor) / 5730.0f;
+            break;
+        case PITCH:
+            attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(trim_angle_cd.x, target_angle_cd + trim_angle_cd.y, 0.0f);
+            command_reading = motors->get_pitch();
+            tgt_rate_reading = ((float)attitude_control->get_att_target_euler_cd().y) / 5730.0f;
+            gyro_reading = ((float)ahrs_view->pitch_sensor) / 5730.0f;
+            break;
+        case YAW:
+            command_reading = motors->get_yaw();
+            tgt_rate_reading = (wrap_180_cd((float)attitude_control->get_att_target_euler_cd().z - trim_yaw_tgt_reading)) / 5730.0f;
+            gyro_reading = (wrap_180_cd((float)ahrs_view->yaw_sensor - trim_yaw_heading_reading)) / 5730.0f;
+            attitude_control->input_euler_angle_roll_pitch_yaw(trim_angle_cd.x, trim_angle_cd.y, wrap_180_cd(trim_yaw_tgt_reading + target_angle_cd), false);
+            break;
+        }
     }
 
     if (settle_time == 0) {
@@ -1323,92 +1095,57 @@ void AC_AutoTune_Heli::angle_dwell_test_run(float start_frq, float stop_frq, flo
 
     // wait for dwell to start before determining gain and phase
     if ((float)(now - dwell_start_time_ms) > 6.25f * cycle_time_ms || (!is_equal(start_frq,stop_frq) && settle_time == 0)) {
-        freqresp_angle.update(command_out, filt_target_rate, rotation_rate, dwell_freq);
-        if (freqresp_angle.is_cycle_complete()) {
+        if (freq_resp_input == 1) {
+            freqresp.update(command_out,filt_target_rate,rotation_rate, dwell_freq);
+        } else {
+            freqresp.update(command_out,command_out,rotation_rate, dwell_freq);
+        }
+
+        if (freqresp.is_cycle_complete()) {
             if (!is_equal(start_frq,stop_frq)) {
-                curr_test_freq = freqresp_angle.get_freq();
-                curr_test_gain = freqresp_angle.get_gain();
-                curr_test_phase = freqresp_angle.get_phase();
-                test_accel_max = freqresp_angle.get_accel_max();
+                curr_test.freq = freqresp.get_freq();
+                curr_test.gain = freqresp.get_gain();
+                curr_test.phase = freqresp.get_phase();
+                if (dwell_type == ANGLE) {test_accel_max = freqresp.get_accel_max();}
                 // reset cycle_complete to allow indication of next cycle
-                freqresp_angle.reset_cycle_complete();
+                freqresp.reset_cycle_complete();
                 // log sweep data
                 Log_AutoTuneSweep();
             } else {
-                dwell_gain = freqresp_angle.get_gain();
-                dwell_phase = freqresp_angle.get_phase();
-                test_accel_max = freqresp_angle.get_accel_max();
+                dwell_gain = freqresp.get_gain();
+                dwell_phase = freqresp.get_phase();
+                if (dwell_type == ANGLE) {test_accel_max = freqresp.get_accel_max();}
             }
         }
     }
 
     // set sweep data if a frequency sweep is being conducted
-    if (!is_equal(start_frq,stop_frq)) {
-        if (curr_test_phase <= 160.0f && curr_test_phase >= 150.0f) {
-            sweep.ph180_freq = curr_test_freq;
-            sweep.ph180_gain = curr_test_gain;
-            sweep.ph180_phase = curr_test_phase;
+    if (!is_equal(start_frq,stop_frq) && (float)(now - dwell_start_time_ms) > 2.5f * cycle_time_ms) {
+        // track sweep phase to prevent capturing 180 deg and 270 deg data after phase has wrapped.
+        if (curr_test.phase > 180.0f && sweep.progress == 0) {
+            sweep.progress = 1;
+        } else if (curr_test.phase > 270.0f && sweep.progress == 1) {
+            sweep.progress = 2;
         }
-        if (curr_test_phase <= 250.0f && curr_test_phase >= 240.0f) {
-            sweep.ph270_freq = curr_test_freq;
-            sweep.ph270_gain = curr_test_gain;
-            sweep.ph270_phase = curr_test_phase;
+        if (curr_test.phase <= 160.0f && curr_test.phase >= 150.0f && sweep.progress == 0) {
+            sweep.ph180 = curr_test;
         }
-        if (curr_test_gain > sweep.maxgain_gain) {
-            sweep.maxgain_gain = curr_test_gain;
-            sweep.maxgain_freq = curr_test_freq;
-            sweep.maxgain_phase = curr_test_phase;
+        if (curr_test.phase <= 250.0f && curr_test.phase >= 240.0f && sweep.progress == 1) {
+            sweep.ph270 = curr_test;
+        }
+        if (curr_test.gain > sweep.maxgain.gain) {
+            sweep.maxgain = curr_test;
         }
         if (now - step_start_time_ms >= sweep_time_ms + 200) {
             // we have passed the maximum stop time
             step = UPDATE_GAINS;
         }
     } else {
-        if (now - step_start_time_ms >= step_time_limit_ms || freqresp_angle.is_cycle_complete()) {
+        if (now - step_start_time_ms >= step_time_limit_ms || freqresp.is_cycle_complete()) {
             // we have passed the maximum stop time
             step = UPDATE_GAINS;
         }
     }
-}
-
-// init_test - initialises the test
-float AC_AutoTune_Heli::waveform(float time, float time_record, float waveform_magnitude, float wMin, float wMax)
-{
-    float time_fade_in = 0.0f;      // Time to reach maximum amplitude of chirp
-    float time_fade_out = 0.1 * time_record;     // Time to reach zero amplitude after chirp finishes
-    float time_const_freq = 0.0f;
-
-    float window;
-    float output;
-
-    float B = logf(wMax / wMin);
-
-    if (time <= 0.0f) {
-        window = 0.0f;
-    } else if (time <= time_fade_in) {
-        window = 0.5 - 0.5 * cosf(M_PI * time / time_fade_in);
-    } else if (time <= time_record - time_fade_out) {
-        window = 1.0;
-    } else if (time <= time_record) {
-        window = 0.5 - 0.5 * cosf(M_PI * (time - (time_record - time_fade_out)) / time_fade_out + M_PI);
-    } else {
-        window = 0.0;
-    }
-
-    if (time <= 0.0f) {
-        waveform_freq_rads = wMin;
-        output = 0.0f;
-    } else if (time <= time_const_freq) {
-        waveform_freq_rads = wMin;
-        output = window * waveform_magnitude * sinf(wMin * time - wMin * time_const_freq);
-    } else if (time <= time_record) {
-        waveform_freq_rads = wMin * expf(B * (time - time_const_freq) / (time_record - time_const_freq));
-        output = window * waveform_magnitude * sinf((wMin * (time_record - time_const_freq) / B) * (expf(B * (time - time_const_freq) / (time_record - time_const_freq)) - 1));
-    } else {
-        waveform_freq_rads = wMax;
-        output = 0.0f;
-    }
-    return output;
 }
 
 // update gains for the rate p up tune type
@@ -1614,25 +1351,25 @@ void AC_AutoTune_Heli::updating_rate_p_up(float &tune_p, float *freq, float *gai
         frq_cnt++;
         if (frq_cnt == 12) {
             freq[frq_cnt] = freq[rp_prev_good_frq_cnt];
-            curr_test_freq = freq[frq_cnt];
+            curr_test.freq = freq[frq_cnt];
         } else {
             freq[frq_cnt] = freq[frq_cnt-1] + test_freq_incr;
-            curr_test_freq = freq[frq_cnt];
+            curr_test.freq = freq[frq_cnt];
         }
     } else if (is_equal(start_freq,stop_freq)) {
         if (phase[frq_cnt] > 180.0f) {
-            curr_test_freq = curr_test_freq - 0.5 * test_freq_incr;
-            freq[frq_cnt] = curr_test_freq;
+            curr_test.freq = curr_test.freq - 0.5 * test_freq_incr;
+            freq[frq_cnt] = curr_test.freq;
         } else if (phase[frq_cnt] < 160.0f) {
-            curr_test_freq = curr_test_freq + 0.5 * test_freq_incr;
-            freq[frq_cnt] = curr_test_freq;
+            curr_test.freq = curr_test.freq + 0.5 * test_freq_incr;
+            freq[frq_cnt] = curr_test.freq;
         } else if (phase[frq_cnt] <= 180.0f && phase[frq_cnt] >= 160.0f) {
             if (gain[frq_cnt] < max_resp_gain && tune_p < 0.6f * max_gain_p.max_allowed) {
                 tune_p += 0.05f * max_gain_p.max_allowed;
             } else {
                 counter = AUTOTUNE_SUCCESS_COUNT;
-                // reset curr_test_freq and frq_cnt for next test
-                curr_test_freq = freq[0];
+                // reset curr_test.freq and frq_cnt for next test
+                curr_test.freq = freq[0];
                 frq_cnt = 0;
                 tune_p -= 0.05f * max_gain_p.max_allowed;
                 tune_p = constrain_float(tune_p,0.0f,0.6f * max_gain_p.max_allowed);
@@ -1643,8 +1380,8 @@ void AC_AutoTune_Heli::updating_rate_p_up(float &tune_p, float *freq, float *gai
     if (counter == AUTOTUNE_SUCCESS_COUNT) {
         start_freq = 0.0f;  //initializes next test that uses dwell test
     } else {
-        start_freq = curr_test_freq;
-        stop_freq = curr_test_freq;
+        start_freq = curr_test.freq;
+        stop_freq = curr_test.freq;
     }
 }
 
@@ -1655,15 +1392,15 @@ void AC_AutoTune_Heli::updating_rate_d_up(float &tune_d, float *freq, float *gai
 
     // frequency sweep was conducted.  check to see if freq for 180 deg phase was determined and start there if it was
     if (!is_equal(start_freq,stop_freq)) {
-        if (!is_zero(sweep.ph180_freq)) {
-            freq[frq_cnt] = sweep.ph180_freq - 0.5f * test_freq_incr;
+        if (!is_zero(sweep.ph180.freq)) {
+            freq[frq_cnt] = sweep.ph180.freq - 0.5f * test_freq_incr;
             frq_cnt = 12;
             freq_cnt_max = frq_cnt;
         } else {
             frq_cnt = 1;
             freq[frq_cnt] = min_sweep_freq;
         }
-        curr_test_freq = freq[frq_cnt];
+        curr_test.freq = freq[frq_cnt];
     }
     // if sweep failed to find frequency for 180 phase then use dwell to find frequency
     if (frq_cnt < 12 && is_equal(start_freq,stop_freq)) {
@@ -1679,26 +1416,26 @@ void AC_AutoTune_Heli::updating_rate_d_up(float &tune_d, float *freq, float *gai
         frq_cnt++;
         if (frq_cnt == 12) {
             freq[frq_cnt] = freq[rd_prev_good_frq_cnt];
-            curr_test_freq = freq[frq_cnt];
+            curr_test.freq = freq[frq_cnt];
         } else {
             freq[frq_cnt] = freq[frq_cnt-1] + test_freq_incr;
-            curr_test_freq = freq[frq_cnt];
+            curr_test.freq = freq[frq_cnt];
         }
     } else if (is_equal(start_freq,stop_freq)) {
         if (phase[frq_cnt] > 180.0f) {
-            curr_test_freq = curr_test_freq - 0.5 * test_freq_incr;
-            freq[frq_cnt] = curr_test_freq;
+            curr_test.freq = curr_test.freq - 0.5 * test_freq_incr;
+            freq[frq_cnt] = curr_test.freq;
         } else if (phase[frq_cnt] < 160.0f) {
-            curr_test_freq = curr_test_freq + 0.5 * test_freq_incr;
-            freq[frq_cnt] = curr_test_freq;
+            curr_test.freq = curr_test.freq + 0.5 * test_freq_incr;
+            freq[frq_cnt] = curr_test.freq;
         } else if (phase[frq_cnt] <= 180.0f && phase[frq_cnt] >= 160.0f) {
             if ((gain[frq_cnt] < rd_prev_gain || is_zero(rd_prev_gain)) && tune_d < 0.6f * max_gain_d.max_allowed) {
                 tune_d += 0.05f * max_gain_d.max_allowed;
                 rd_prev_gain = gain[frq_cnt];
             } else {
                 counter = AUTOTUNE_SUCCESS_COUNT;
-                // reset curr_test_freq and frq_cnt for next test
-                curr_test_freq = freq[0];
+                // reset curr_test.freq and frq_cnt for next test
+                curr_test.freq = freq[0];
                 frq_cnt = 0;
                 rd_prev_gain = 0.0f;
                 tune_d -= 0.05f * max_gain_d.max_allowed;
@@ -1710,8 +1447,8 @@ void AC_AutoTune_Heli::updating_rate_d_up(float &tune_d, float *freq, float *gai
         start_freq = 0.0f;  //initializes next test that uses dwell test
         reset_sweep_variables();
     } else {
-        start_freq = curr_test_freq;
-        stop_freq = curr_test_freq;
+        start_freq = curr_test.freq;
+        stop_freq = curr_test.freq;
     }
 }
 
@@ -1722,16 +1459,16 @@ void AC_AutoTune_Heli::updating_angle_p_up(float &tune_p, float *freq, float *ga
     float gain_incr = 0.5f;
 
     if (!is_equal(start_freq,stop_freq)) {
-        if (!is_zero(sweep.maxgain_freq)) {
+        if (!is_zero(sweep.maxgain.freq)) {
             frq_cnt = 12;
-            freq[frq_cnt] = sweep.maxgain_freq - 0.5f * test_freq_incr;
+            freq[frq_cnt] = sweep.maxgain.freq - 0.5f * test_freq_incr;
             freq_cnt_max = frq_cnt;
         } else {
             frq_cnt = 1;
             freq[frq_cnt] = min_sweep_freq;
             freq_cnt_max = 0;
         }
-        curr_test_freq = freq[frq_cnt];
+        curr_test.freq = freq[frq_cnt];
     }
     if (freq_cnt < 12 && is_equal(start_freq,stop_freq)) {
         if (gain[freq_cnt] > max_resp_gain && tune_p > AUTOTUNE_SP_MIN) {
@@ -1755,10 +1492,10 @@ void AC_AutoTune_Heli::updating_angle_p_up(float &tune_p, float *freq, float *ga
         freq_cnt++;
         if (freq_cnt == 12) {
             freq[freq_cnt] = freq[freq_cnt_max];
-            curr_test_freq = freq[freq_cnt];
+            curr_test.freq = freq[freq_cnt];
         } else {
             freq[freq_cnt] = freq[freq_cnt-1] + test_freq_incr;
-            curr_test_freq = freq[freq_cnt];
+            curr_test.freq = freq[freq_cnt];
         }
     }
 
@@ -1778,7 +1515,7 @@ void AC_AutoTune_Heli::updating_angle_p_up(float &tune_p, float *freq, float *ga
                     AP::logger().Write_Event(LogEvent::AUTOTUNE_REACHED_LIMIT);
                 }
             }
-            curr_test_freq = freq[freq_cnt];
+            curr_test.freq = freq[freq_cnt];
             sp_prev_gain = gain[freq_cnt];
         } else if (gain[freq_cnt] > 1.1f * max_resp_gain && tune_p > AUTOTUNE_SP_MIN && !find_peak) {
             tune_p -= gain_incr;
@@ -1790,7 +1527,7 @@ void AC_AutoTune_Heli::updating_angle_p_up(float &tune_p, float *freq, float *ga
                 find_peak = false;
                 phase_max = phase[freq_cnt];
             }
-            curr_test_freq = freq[freq_cnt];
+            curr_test.freq = freq[freq_cnt];
             sp_prev_gain = gain[freq_cnt];
         } else {
             // adjust tuning gain so max response gain is not exceeded
@@ -1804,11 +1541,11 @@ void AC_AutoTune_Heli::updating_angle_p_up(float &tune_p, float *freq, float *ga
     if (counter == AUTOTUNE_SUCCESS_COUNT) {
         start_freq = 0.0f;  //initializes next test that uses dwell test
         reset_sweep_variables();
-        curr_test_freq = freq[0];
+        curr_test.freq = freq[0];
         freq_cnt = 0;
     } else {
-        start_freq = curr_test_freq;
-        stop_freq = curr_test_freq;
+        start_freq = curr_test.freq;
+        stop_freq = curr_test.freq;
     }
 }
 
@@ -1819,14 +1556,14 @@ void AC_AutoTune_Heli::updating_max_gains(float *freq, float *gain, float *phase
 
     if (!is_equal(start_freq,stop_freq)) {
         frq_cnt = 2;
-        if (!is_zero(sweep.ph180_freq)) {
-            freq[frq_cnt] = sweep.ph180_freq - 0.5f * test_freq_incr;
+        if (!is_zero(sweep.ph180.freq)) {
+            freq[frq_cnt] = sweep.ph180.freq - 0.5f * test_freq_incr;
         } else {
             freq[frq_cnt] = min_sweep_freq;
         }
-        curr_test_freq = freq[frq_cnt];
-        start_freq = curr_test_freq;
-        stop_freq = curr_test_freq;
+        curr_test.freq = freq[frq_cnt];
+        start_freq = curr_test.freq;
+        stop_freq = curr_test.freq;
 
     } else if (frq_cnt < 12 && is_equal(start_freq,stop_freq)) {
         if (frq_cnt > 2 && phase[frq_cnt] > 161.0f && phase[frq_cnt] < 270.0f &&
@@ -1849,11 +1586,11 @@ void AC_AutoTune_Heli::updating_max_gains(float *freq, float *gain, float *phase
             found_max_p = true;
             find_middle = false;
 
-            if (!is_zero(sweep.ph270_freq)) {
+            if (!is_zero(sweep.ph270.freq)) {
                 // set freq cnt back to reinitialize process
                 frq_cnt = 1;  // set to 1 because it will be incremented
                 // set frequency back at least one test_freq_incr as it will be added
-                freq[1] = sweep.ph270_freq - 1.5f * test_freq_incr;
+                freq[1] = sweep.ph270.freq - 1.5f * test_freq_incr;
             }
         }
         if (frq_cnt > 2 && phase[frq_cnt] > 251.0f && phase[frq_cnt] < 360.0f &&
@@ -1884,7 +1621,7 @@ void AC_AutoTune_Heli::updating_max_gains(float *freq, float *gain, float *phase
         if (frq_cnt == 12) {
             counter = AUTOTUNE_SUCCESS_COUNT;
             // reset variables for next test
-            curr_test_freq = freq[0];
+            curr_test.freq = freq[0];
             frq_cnt = 0;
             start_freq = 0.0f;  //initializes next test that uses dwell test
             reset_sweep_variables();
@@ -1904,9 +1641,9 @@ void AC_AutoTune_Heli::updating_max_gains(float *freq, float *gain, float *phase
             } else {
                 freq[frq_cnt] = freq[frq_cnt-1] + test_freq_incr;
             }
-            curr_test_freq = freq[frq_cnt];
-            start_freq = curr_test_freq;
-            stop_freq = curr_test_freq;
+            curr_test.freq = freq[frq_cnt];
+            start_freq = curr_test.freq;
+            stop_freq = curr_test.freq;
         }
     }
     if (found_max_p && found_max_d) {
@@ -1948,7 +1685,7 @@ void AC_AutoTune_Heli::Log_AutoTuneDetails()
 // log autotune frequency response data
 void AC_AutoTune_Heli::Log_AutoTuneSweep()
 {
-    Log_Write_AutoTuneSweep(curr_test_freq, curr_test_gain, curr_test_phase);
+    Log_Write_AutoTuneSweep(curr_test.freq, curr_test.gain, curr_test.phase);
 }
 
 // @LoggerMessage: ATNH
@@ -2074,14 +1811,8 @@ void AC_AutoTune_Heli::reset_update_gain_variables()
 // reset the max_gains update gain variables
 void AC_AutoTune_Heli::reset_maxgains_update_gain_variables()
 {
-    max_rate_p.freq = 0.0f;
-    max_rate_p.gain = 0.0f;
-    max_rate_p.phase = 0.0f;
-    max_rate_p.max_allowed = 0.0f;
-    max_rate_d.freq = 0.0f;
-    max_rate_d.gain = 0.0f;
-    max_rate_d.phase = 0.0f;
-    max_rate_d.max_allowed = 0.0f;
+    max_rate_p = {};
+    max_rate_d = {};
     found_max_p = false;
     found_max_d = false;
     find_middle = false;
@@ -2091,15 +1822,10 @@ void AC_AutoTune_Heli::reset_maxgains_update_gain_variables()
 // reset the max_gains update gain variables
 void AC_AutoTune_Heli::reset_sweep_variables()
 {
-    sweep.ph180_freq = 0.0f;
-    sweep.ph180_gain = 0.0f;
-    sweep.ph180_phase = 0.0f;
-    sweep.ph270_freq = 0.0f;
-    sweep.ph270_gain = 0.0f;
-    sweep.ph270_phase = 0.0f;
-    sweep.maxgain_gain = 0.0f;
-    sweep.maxgain_freq = 0.0f;
-    sweep.maxgain_phase = 0.0f;
+    sweep.ph180 = {};
+    sweep.ph270 = {};
+    sweep.maxgain = {};
+
     sweep.progress = 0;
 }
 

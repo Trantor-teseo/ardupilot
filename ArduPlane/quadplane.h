@@ -108,6 +108,7 @@ public:
     bool verify_vtol_land(void);
     bool in_vtol_auto(void) const;
     bool in_vtol_mode(void) const;
+    bool in_vtol_takeoff(void) const;
     bool in_vtol_posvel_mode(void) const;
     void update_throttle_hover();
     bool show_vtol_view() const;
@@ -162,6 +163,9 @@ public:
         Q_ASSIST_FORCE,
     };
     void set_q_assist_state(Q_ASSIST_STATE_ENUM state) {q_assist_state = state;};
+
+    // called when we change mode (for any mode, not just Q modes)
+    void mode_enter(void);
 
 private:
     AP_AHRS &ahrs;
@@ -261,12 +265,13 @@ private:
     void update_throttle_suppression(void);
 
     void run_z_controller(void);
-    void run_xy_controller(void);
+    void run_xy_controller(float accel_limit=0.0);
 
     void setup_defaults(void);
 
     // calculate a stopping distance for fixed-wing to vtol transitions
-    float stopping_distance(float ground_speed_squared);
+    float stopping_distance(float ground_speed_squared) const;
+    float accel_needed(float stop_distance, float ground_speed_squared) const;
     float stopping_distance(void);
 
     // distance below which we don't do approach, based on stopping
@@ -397,11 +402,38 @@ private:
     // are we in a guided takeoff?
     bool guided_takeoff:1;
 
+    /* if we arm in guided mode when we arm then go into a "waiting
+       for takeoff command" state. In this state we are waiting for
+       one of the following:
+
+       1) disarm
+       2) guided takeoff command
+       3) change to AUTO with a takeoff waypoint as first nav waypoint
+       4) change to another mode
+
+       while in this state we don't go to throttle unlimited, and will
+       refuse a change to AUTO mode if the first waypoint is not a
+       takeoff. If we try to switch to RTL then we will instead use
+       QLAND
+
+       This state is needed to cope with the takeoff sequence used
+       by QGC on common controllers such as the MX16, which do this on a "takeoff" swipe:
+
+          - changes mode to GUIDED
+          - arms
+          - changes mode to AUTO
+    */
+    bool guided_wait_takeoff;
+    bool guided_wait_takeoff_on_mode_enter;
+
     struct {
         // time when motors reached lower limit
         uint32_t lower_limit_start_ms;
         uint32_t land_start_ms;
         float vpos_start_m;
+
+        // landing detection threshold in meters
+        AP_Float detect_alt_change;
     } landing_detect;
 
     // throttle mix acceleration filter
@@ -430,6 +462,7 @@ private:
             return AP_HAL::millis() - last_state_change_ms;
         }
         Vector3p target_cm;
+        Vector2f xy_correction;
         Vector3f target_vel_cms;
         bool slow_descent:1;
         bool pilot_correction_active;
@@ -438,7 +471,13 @@ private:
         uint32_t last_log_ms;
         bool reached_wp_speed;
         uint32_t last_run_ms;
-        float pos1_start_speed;
+        float pos1_speed_limit;
+        bool done_accel_init;
+        Vector2f velocity_match;
+        uint32_t last_velocity_match_ms;
+        float target_speed;
+        float target_accel;
+        uint32_t last_pos_reset_ms;
     private:
         uint32_t last_state_change_ms;
         enum position_control_state state;
@@ -508,6 +547,7 @@ private:
         OPTION_REPOSITION_LANDING=(1<<17),
         OPTION_ONLY_ARM_IN_QMODE_OR_AUTO=(1<<18),
         OPTION_TRANS_FAIL_TO_FW=(1<<19),
+        OPTION_FS_RTL=(1<<20),
     };
 
     AP_Float takeoff_failure_scalar;
@@ -561,6 +601,11 @@ private:
       see if we are in the VTOL position control phase of a landing
     */
     bool in_vtol_land_poscontrol(void) const;
+
+    /*
+      are we in the airbrake phase of a VTOL landing?
+     */
+    bool in_vtol_airbrake(void) const;
     
     // Q assist state, can be enabled, disabled or force. Default to enabled
     Q_ASSIST_STATE_ENUM q_assist_state = Q_ASSIST_STATE_ENUM::Q_ASSIST_ENABLED;

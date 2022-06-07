@@ -3692,7 +3692,13 @@ class AutoTest(ABC):
             wp.z)
         return wp_int
 
-    def load_mission_from_filepath(self, filepath, filename, target_system=1, target_component=1, strict=True):
+    def load_mission_from_filepath(self,
+                                   filepath,
+                                   filename,
+                                   target_system=1,
+                                   target_component=1,
+                                   strict=True,
+                                   reset_current_wp=True):
         self.progress("Loading mission (%s)" % filename)
         path = os.path.join(testdir, filepath, filename)
         wploader = mavwp.MAVWPLoader(
@@ -3702,6 +3708,11 @@ class AutoTest(ABC):
         wploader.load(path)
         wpoints_int = [self.wp_to_mission_item_int(x) for x in wploader.wpoints]
         self.check_mission_upload_download(wpoints_int, strict=strict)
+        if reset_current_wp:
+            # ArduPilot doesn't reset the current waypoint by default
+            # we may be in auto mode and running waypoints, so we
+            # can't check the current waypoint after resetting it.
+            self.set_current_waypoint(0, check_afterwards=False)
         return len(wpoints_int)
 
     def load_mission_using_mavproxy(self, mavproxy, filename):
@@ -4242,6 +4253,22 @@ class AutoTest(ABC):
                      0,
                      timeout=timeout)
         return self.wait_disarmed()
+
+    def disarm_vehicle_expect_fail(self):
+        '''disarm, checking first that non-forced disarm fails, then doing a forced disarm'''
+        self.progress("Disarm - expect to fail")
+        self.run_cmd(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                     0,  # DISARM
+                     0,
+                     0,
+                     0,
+                     0,
+                     0,
+                     0,
+                     timeout=10,
+                     want_result=mavutil.mavlink.MAV_RESULT_FAILED)
+        self.progress("Disarm - forced")
+        self.disarm_vehicle(force=True)
 
     def wait_disarmed_default_wait_time(self):
         return 30
@@ -5822,6 +5849,21 @@ class AutoTest(ABC):
             if comparator(m_value, value):
                 return m_value
 
+    def assert_servo_channel_value(self, channel, value, comparator=operator.eq):
+        """assert channel value (default condition is equality)"""
+        channel_field = "servo%u_raw" % channel
+        opstring = ("%s" % comparator)[-3:-1]
+        m = self.assert_receive_message('SERVO_OUTPUT_RAW', timeout=1)
+        m_value = getattr(m, channel_field, None)
+        if m_value is None:
+            raise ValueError("message (%s) has no field %s" %
+                             (str(m), channel_field))
+        self.progress("assert SERVO_OUTPUT_RAW.%s=%u %s %u" %
+                      (channel_field, m_value, opstring, value))
+        if comparator(m_value, value):
+            return m_value
+        raise NotAchievedException("Wrong value")
+
     def get_rc_channel_value(self, channel, timeout=2):
         """wait for channel to hit value"""
         channel_field = "chan%u_raw" % channel
@@ -5853,6 +5895,16 @@ class AutoTest(ABC):
                           (channel_field, m_value, value))
             if value == m_value:
                 return
+
+    def assert_rc_channel_value(self, channel, value):
+        channel_field = "chan%u_raw" % channel
+
+        m_value = self.get_rc_channel_value(channel, timeout=1)
+        self.progress("RC_CHANNELS.%s=%u want=%u" %
+                      (channel_field, m_value, value))
+        if value != m_value:
+            raise NotAchievedException("Expected %s to be %u got %u" %
+                                       (channel, value, m_value))
 
     def wait_location(self,
                       loc,
@@ -6501,6 +6553,9 @@ Also, ignores heartbeats not from our target system'''
         try:
             self.check_rc_defaults()
             self.change_mode(self.default_mode())
+            # ArduPilot can still move the current waypoint from 0,
+            # even if we are not in AUTO mode, so cehck_afterwards=False:
+            self.set_current_waypoint(0, check_afterwards=False)
             self.drain_mav()
             self.drain_all_pexpects()
 
@@ -6618,6 +6673,7 @@ Also, ignores heartbeats not from our target system'''
 
         if not self.is_tracker(): # FIXME - more to the point, fix Tracker's mission handling
             self.clear_mission(mavutil.mavlink.MAV_MISSION_TYPE_ALL)
+            self.set_current_waypoint(0, check_afterwards=False)
 
         tee.close()
 
@@ -11012,7 +11068,7 @@ switch value'''
         # ok done, stop the engine
         if self.is_plane():
             self.zero_throttle()
-            if not self.disarm_vehicle():
+            if not self.disarm_vehicle(force=True):
                 raise NotAchievedException("Failed to DISARM")
 
     def test_frsky_d(self):

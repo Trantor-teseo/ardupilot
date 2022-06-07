@@ -150,8 +150,9 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
     // @Param: _TUBE_ORDER
     // @DisplayName: Control pitot tube order
-    // @Description: Changes the pitot tube order to specify the dynamic pressure side of the sensor. Accepts either if set to 2. Accepts only one side if set to 0 or 1 and can help detect excessive pressure on the static port without indicating positive airspeed.
+    // @Description: This parameter allows you to control whether the order in which the tubes are attached to your pitot tube matters. If you set this to 0 then the first (often the top) connector on the sensor needs to be the stagnation pressure (the pressure at the tip of the pitot tube). If set to 1 then the second (often the bottom) connector needs to be the stagnation pressure. If set to 2 (the default) then the airspeed driver will accept either order. The reason you may wish to specify the order is it will allow your airspeed sensor to detect if the aircraft is receiving excessive pressure on the static port compared to the stagnation port such as during a stall, which would otherwise be seen as a positive airspeed.
     // @User: Advanced
+    // @Values: 0:Normal,1:Swapped,2:Auto Detect
     AP_GROUPINFO("_TUBE_ORDER",  6, AP_Airspeed, param[0].tube_order, 2),
 
 #ifndef HAL_BUILD_AP_PERIPH
@@ -253,8 +254,9 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
     // @Param: 2_TUBE_ORDR
     // @DisplayName: Control pitot tube order of 2nd airspeed sensor
-    // @Description: This parameter allows you to control whether the order in which the tubes are attached to your pitot tube matters. If you set this to 0 then the top connector on the sensor needs to be the dynamic pressure. If set to 1 then the bottom connector needs to be the dynamic pressure. If set to 2 (the default) then the airspeed driver will accept either order. The reason you may wish to specify the order is it will allow your airspeed sensor to detect if the aircraft it receiving excessive pressure on the static port, which would otherwise be seen as a positive airspeed.
+    // @Description: This parameter allows you to control whether the order in which the tubes are attached to your pitot tube matters. If you set this to 0 then the first (often the top) connector on the sensor needs to be the stagnation pressure (the pressure at the tip of the pitot tube). If set to 1 then the second (often the bottom) connector needs to be the stagnation pressure. If set to 2 (the default) then the airspeed driver will accept either order. The reason you may wish to specify the order is it will allow your airspeed sensor to detect if the aircraft is receiving excessive pressure on the static port compared to the stagnation port such as during a stall, which would otherwise be seen as a positive airspeed.
     // @User: Advanced
+    // @Values: 0:Normal,1:Swapped,2:Auto Detect
     AP_GROUPINFO("2_TUBE_ORDR",  17, AP_Airspeed, param[1].tube_order, 2),
 
     // @Param: 2_SKIP_CAL
@@ -604,13 +606,6 @@ void AP_Airspeed::read(uint8_t i)
         state[i].airspeed       = sqrtf(fabsf(state[i].filtered_pressure) * param[i].ratio);
         break;
     }
-
-    if (state[i].last_pressure < -32) {
-        // we're reading more than about -8m/s. The user probably has
-        // the ports the wrong way around
-        state[i].healthy = false;
-    }
-
 }
 
 // read all airspeed sensors
@@ -689,7 +684,7 @@ void AP_Airspeed::Log_Airspeed()
             offset        : get_offset(i),
             use           : use(i),
             healthy       : healthy(i),
-            health_prob   : get_health_failure_probability(i),
+            health_prob   : get_health_probability(i),
             primary       : get_primary()
         };
         AP::logger().WriteBlock(&pkt, sizeof(pkt));

@@ -716,10 +716,10 @@ const AP_Param::Info Plane::var_info[] = {
 
     // @Param: RTL_AUTOLAND
     // @DisplayName: RTL auto land
-    // @Description: Automatically begin landing sequence after arriving at RTL location. This requires the addition of a DO_LAND_START mission item, which acts as a marker for the start of a landing sequence. The closest landing sequence will be chosen to the current location. 
-    // @Values: 0:Disable,1:Enable - go HOME then land,2:Enable - go directly to landing sequence
+    // @Description: Automatically begin landing sequence after arriving at RTL location. This requires the addition of a DO_LAND_START mission item, which acts as a marker for the start of a landing sequence. The closest landing sequence will be chosen to the current location. If this is set to 0 and there is a DO_LAND_START mission item then you will get an arming check failure. You can set to a value of 3 to avoid the arming check failure and use the DO_LAND_START for go-around without it changing RTL behaviour. For a value of 1 a rally point will be used instead of HOME if in range (see rally point documentation).
+    // @Values: 0:Disable,1:Fly HOME then land,2:Go directly to landing sequence, 3:OnlyForGoAround
     // @User: Standard
-    GSCALAR(rtl_autoland,         "RTL_AUTOLAND",   0),
+    GSCALAR(rtl_autoland,         "RTL_AUTOLAND",   float(RtlAutoland::RTL_DISABLE)),
 
     // @Param: CRASH_ACC_THRESH
     // @DisplayName: Crash Deceleration Threshold
@@ -1229,6 +1229,12 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @User: Advanced
     // @Bitmask: 0: Servo 1, 1: Servo 2, 2: Servo 3, 3: Servo 4, 4: Servo 5, 5: Servo 6, 6: Servo 7, 7: Servo 8, 8: Servo 9, 9: Servo 10, 10: Servo 11, 11: Servo 12, 12: Servo 13, 13: Servo 14, 14: Servo 15
     AP_GROUPINFO("ONESHOT_MASK", 32, ParametersG2, oneshot_mask, 0),
+
+#if AP_SCRIPTING_ENABLED
+    // @Group: FOLL
+    // @Path: ../libraries/AP_Follow/AP_Follow.cpp
+    AP_SUBGROUPINFO(follow, "FOLL", 33, ParametersG2, AP_Follow),
+#endif
     
     AP_GROUPEND
 };
@@ -1492,6 +1498,24 @@ void Plane::load_parameters(void)
         const uint16_t old_index = 0;       // Old parameter index in the tree
         const uint16_t old_top_element = 0; // Old group element in the tree for the first subgroup element (see AP_PARAM_KEY_DUMP)
         AP_Param::convert_class(old_key, &airspeed, airspeed.var_info, old_index, old_top_element, true);
+    }
+
+    if (!ins.gyro_notch_enabled()) {
+        // notch filter parameter conversions (moved to INS_HNTC2) for 4.2.x, converted from fixed notch
+        const AP_Param::ConversionInfo notchfilt_conversion_info[] {
+            { Parameters::k_param_ins, 101, AP_PARAM_INT8,  "INS_HNTC2_ENABLE" },
+            { Parameters::k_param_ins, 293, AP_PARAM_FLOAT, "INS_HNTC2_ATT" },
+            { Parameters::k_param_ins, 357, AP_PARAM_FLOAT, "INS_HNTC2_FREQ" },
+            { Parameters::k_param_ins, 421, AP_PARAM_FLOAT, "INS_HNTC2_BW" },
+        };
+        uint8_t notchfilt_table_size = ARRAY_SIZE(notchfilt_conversion_info);
+        for (uint8_t i=0; i<notchfilt_table_size; i++) {
+            AP_Param::convert_old_parameters(&notchfilt_conversion_info[i], 1.0f);
+        }
+        if (ins.gyro_notch_enabled()) {
+            AP_Param::set_default_by_name("INS_HNTC2_MODE", 0);
+            AP_Param::set_default_by_name("INS_HNTC2_HMNCS", 1);
+        }
     }
 
     hal.console->printf("load_all took %uus\n", (unsigned)(micros() - before));

@@ -580,14 +580,14 @@ void AP_AHRS::update_EKF3(void)
             // update _accel_ef_ekf
             for (uint8_t i=0; i<_ins.get_accel_count(); i++) {
                 Vector3f accel = _ins.get_accel(i);
-                if (i==_ins.get_primary_accel()) {
+                if (i == primary_imu) {
                     accel -= abias;
                 }
                 if (_ins.get_accel_health(i)) {
                     _accel_ef_ekf[i] = _dcm_matrix * accel;
                 }
             }
-            _accel_ef_ekf_blended = _accel_ef_ekf[_ins.get_primary_accel()];
+            _accel_ef_ekf_blended = _accel_ef_ekf[primary_imu>=0?primary_imu:_ins.get_primary_accel()];
             nav_filter_status filt_state;
             EKF3.getFilterStatus(-1,filt_state);
             update_notify_from_filter_status(filt_state);

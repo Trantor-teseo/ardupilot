@@ -215,10 +215,10 @@ public:
     float get_gyro_drift_rate(void) const { return ToRad(0.5f/60); }
 
     // update gyro and accel values from accumulated samples
-    void update(void);
+    void update(void) __RAMFUNC__;
 
     // wait for a sample to be available
-    void wait_for_sample(void);
+    void wait_for_sample(void) __RAMFUNC__;
 
     // class level parameters
     static const struct AP_Param::GroupInfo var_info[];
@@ -302,6 +302,9 @@ public:
 
     // check for vibration movement. True when all axis show nearly zero movement
     bool is_still();
+
+    // return true if notch enabled
+    bool gyro_notch_enabled(void) const { return _notch_filter.enabled(); }
 
     // return true if harmonic notch enabled
     bool gyro_harmonic_notch_enabled(void) const { return _harmonic_notch_filter.enabled(); }

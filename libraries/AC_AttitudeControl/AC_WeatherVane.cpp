@@ -10,10 +10,12 @@
     #define WVANE_PARAM_ENABLED 1
     #define WVANE_PARAM_SPD_MAX_DEFAULT 0
     #define WVANE_PARAM_VELZ_MAX_DEFAULT 0
+    #define WVANE_PARAM_GAIN_DEFAULT 0
 #else
     #define WVANE_PARAM_ENABLED 0
     #define WVANE_PARAM_SPD_MAX_DEFAULT 2
     #define WVANE_PARAM_VELZ_MAX_DEFAULT 1
+    #define WVANE_PARAM_GAIN_DEFAULT 1
 #endif
 
 
@@ -32,7 +34,7 @@ const AP_Param::GroupInfo AC_WeatherVane::var_info[] = {
     // @Range: 0.5 4
     // @Increment: 0.1
     // @User: Standard
-    AP_GROUPINFO("GAIN", 2, AC_WeatherVane, _gain, 1.0),
+    AP_GROUPINFO("GAIN", 2, AC_WeatherVane, _gain, WVANE_PARAM_GAIN_DEFAULT),
 
     // @Param: ANG_MIN
     // @DisplayName: Weathervaning min angle
@@ -85,6 +87,13 @@ const AP_Param::GroupInfo AC_WeatherVane::var_info[] = {
     // @User: Standard
     AP_GROUPINFO("LAND", 8, AC_WeatherVane, _landing_direction, -1),
 
+    // @Param: OPTIONS
+    // @DisplayName: Weathervaning options
+    // @Description: Options impacting weathervaning behaviour
+    // @Bitmask: 0:Use pitch when nose or tail-in for faster weathervaning
+    // @User: Standard
+    AP_GROUPINFO("OPTIONS", 9, AC_WeatherVane, _options, 0),
+    
     AP_GROUPEND
 };
 
@@ -98,8 +107,8 @@ AC_WeatherVane::AC_WeatherVane(void)
 bool AC_WeatherVane::get_yaw_out(float &yaw_output, const int16_t pilot_yaw, const float hgt, const float roll_cdeg, const float pitch_cdeg, const bool is_takeoff, const bool is_landing)
 {
     Direction dir = (Direction)_direction.get();
-    if ((dir == Direction::OFF) || !allowed || (pilot_yaw != 0)) {
-        // parameter disabled
+    if ((dir == Direction::OFF) || !allowed || (pilot_yaw != 0) || !is_positive(_gain)) {
+        // parameter disabled, or 0 gain
         // disabled temporarily
         // dont't override pilot
         reset();
@@ -157,14 +166,18 @@ bool AC_WeatherVane::get_yaw_out(float &yaw_output, const int16_t pilot_yaw, con
     const float deadzone_cdeg = _min_dz_ang_deg*100.0;
     float output = 0.0;
     const char* dir_string = "";
+
+    // should we enable pitch input for nose-in and tail-in?
+    const bool pitch_enable = (uint8_t(_options.get()) & uint8_t(Options::PITCH_ENABLE)) != 0;
+
     switch (dir) {
         case Direction::OFF:
             reset();
             return false;
 
         case Direction::NOSE_IN:
-            if (is_positive(pitch_cdeg)) {
-                output = fabsf(roll_cdeg) + pitch_cdeg;
+            if (pitch_enable && is_positive(pitch_cdeg - deadzone_cdeg)) {
+                output = fabsf(roll_cdeg) + (pitch_cdeg - deadzone_cdeg);
             } else {
                 output = MAX(fabsf(roll_cdeg) - deadzone_cdeg, 0.0);
             }
@@ -191,8 +204,8 @@ bool AC_WeatherVane::get_yaw_out(float &yaw_output, const int16_t pilot_yaw, con
             break;
 
         case Direction::TAIL_IN:
-            if (is_negative(pitch_cdeg)) {
-                output = fabsf(roll_cdeg) - pitch_cdeg;
+            if (pitch_enable && is_negative(pitch_cdeg + deadzone_cdeg)) {
+                output = fabsf(roll_cdeg) - (pitch_cdeg + deadzone_cdeg);
             } else {
                 output = MAX(fabsf(roll_cdeg) - deadzone_cdeg, 0.0);
             }

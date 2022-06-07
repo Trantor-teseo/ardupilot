@@ -19,6 +19,7 @@
 #pragma once
 
 #include "AC_AutoTune.h"
+#include <AP_Math/chirp.h>
 
 class AC_AutoTune_Heli : public AC_AutoTune
 {
@@ -40,6 +41,9 @@ protected:
 
     // backup original gains and prepare for start of tuning
     void backup_gains_and_initialise() override;
+
+    // load gains
+    void load_gain_set(AxisType s_axis, float rate_p, float rate_i, float rate_d, float rate_ff, float angle_p, float max_accel, float rate_fltt, float rate_flte, float smax);
 
     // switch to use original gains
     void load_orig_gains() override;
@@ -136,20 +140,21 @@ private:
     // max gain data for rate d tuning
     max_gain_data max_rate_d;
 
+    // dwell type identifies whether the dwell is ran on rate or angle
+    enum DwellType {
+        RATE    = 0,
+        ANGLE   = 1,
+    };
+
     // Feedforward test used to determine Rate FF gain
     void rate_ff_test_init();
     void rate_ff_test_run(float max_angle_cds, float target_rate_cds, float dir_sign);
 
+    // initialize dwell test or angle dwell test variables
+    void dwell_test_init(float start_frq, float stop_frq, float filt_freq, DwellType dwell_type);
+
     // dwell test used to perform frequency dwells for rate gains
-    void dwell_test_init(float start_frq, float filt_freq);
-    void dwell_test_run(uint8_t freq_resp_input, float start_frq, float stop_frq, float &dwell_gain, float &dwell_phase);
-
-    // dwell test used to perform frequency dwells for angle gains
-    void angle_dwell_test_init(float start_frq, float filt_freq);
-    void angle_dwell_test_run(float start_frq, float stop_frq, float &dwell_gain, float &dwell_phase);
-
-    // generates waveform for frequency sweep excitations
-    float waveform(float time, float time_record, float waveform_magnitude, float wMin, float wMax);
+    void dwell_test_run(uint8_t freq_resp_input, float start_frq, float stop_frq, float &dwell_gain, float &dwell_phase, DwellType dwell_type);
 
     // updating_rate_ff_up - adjust FF to ensure the target is reached
     // FF is adjusted until rate requested is acheived
@@ -228,9 +233,15 @@ private:
     float    test_phase[20];                        // frequency response phase for each dwell test iteration
     float    dwell_start_time_ms;                   // start time in ms of dwell test
     uint8_t  freq_cnt_max;                          // counter number for frequency that produced max gain response
-    float    curr_test_freq;                        // current test frequency
-    float    curr_test_gain;                        // current test frequency response gain
-    float    curr_test_phase;                       // current test frequency response phase
+
+    // sweep_info contains information about a specific test's sweep results
+    struct sweep_info {
+        float freq;
+        float gain;
+        float phase;
+    };
+    sweep_info curr_test;
+
     Vector3f start_angles;                          // aircraft attitude at the start of test
     uint32_t settle_time;                           // time in ms for allowing aircraft to stabilize before initiating test
     uint32_t phase_out_time;                        // time in ms to phase out response
@@ -263,18 +274,17 @@ private:
 
     // sweep_data tracks the overall characteristics in the response to the frequency sweep
     struct sweep_data {
-        float    maxgain_freq;
-        float    maxgain_gain;
-        float    maxgain_phase;
-        float    ph180_freq;
-        float    ph180_gain;
-        float    ph180_phase;
-        float    ph270_freq;
-        float    ph270_gain;
-        float    ph270_phase;
+        sweep_info maxgain;
+        sweep_info ph180;
+        sweep_info ph270;
+
         uint8_t  progress;  // set based on phase of frequency response.  0 - start; 1 - reached 180 deg; 2 - reached 270 deg;
     };
     sweep_data sweep;
+
+    // fix the frequency sweep time to 23 seconds
+    const float sweep_time_ms = 23000;
+
 
     // parameters
     AP_Int8  axis_bitmask;        // axes to be tuned
@@ -284,8 +294,8 @@ private:
     AP_Float max_resp_gain;     // maximum response gain
     AP_Float vel_hold_gain;     // gain for velocity hold
 
-    // freqresp object for the rate frequency response tests
-    AC_AutoTune_FreqResp freqresp_rate;
-    // freqresp object for the angle frequency response tests
-    AC_AutoTune_FreqResp freqresp_angle;
+    // freqresp object for the frequency response tests
+    AC_AutoTune_FreqResp freqresp;
+
+    Chirp chirp_input;
 };

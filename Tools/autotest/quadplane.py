@@ -187,7 +187,6 @@ class AutoTestQuadPlane(AutoTest):
                 'LOITER',
                 'QHOVER',
                 'QLOITER',
-                'RTL',
                 'STABILIZE',
                 'TRAINING',
         ):
@@ -248,13 +247,12 @@ class AutoTestQuadPlane(AutoTest):
             self.progress("Waiting for Motor1 to speed up")
             self.wait_servo_channel_value(5, spin_min_pwm, comparator=operator.ge)
 
-            self.progress("Disarm/rearm with GCS")
-            self.disarm_vehicle()
+            self.disarm_vehicle_expect_fail()
             self.arm_vehicle()
 
             self.progress("Verify that airmode is still on")
             self.wait_servo_channel_value(5, spin_min_pwm, comparator=operator.ge)
-            self.disarm_vehicle()
+            self.disarm_vehicle(force=True)
             self.wait_ready_to_arm()
 
     def test_motor_mask(self):
@@ -447,6 +445,7 @@ class AutoTestQuadPlane(AutoTest):
 
     def takeoff(self, height, mode):
         """climb to specified height and set throttle to 1500"""
+        self.set_current_waypoint(0, check_afterwards=False)
         self.change_mode(mode)
         self.wait_ready_to_arm()
         self.arm_vehicle()
@@ -471,6 +470,7 @@ class AutoTestQuadPlane(AutoTest):
         self.change_mode("AUTO")
         self.set_current_waypoint(7)
         self.wait_disarmed(timeout=timeout)
+        self.set_current_waypoint(0, check_afterwards=False)
 
     def wait_level_flight(self, accuracy=5, timeout=30):
         """Wait for level flight."""

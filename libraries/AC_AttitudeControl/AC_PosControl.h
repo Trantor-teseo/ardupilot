@@ -96,6 +96,9 @@ public:
     ///     This function decays the output acceleration by 95% every half second to achieve a smooth transition to zero requested acceleration.
     void relax_velocity_controller_xy();
 
+    /// reduce response for landing
+    void soften_for_landing_xy();
+
     // init_xy_controller - initialise the position controller to the current position, velocity, acceleration and attitude.
     ///     This function is the default initialisation for any position control that provides position, velocity and acceleration.
     ///     This function is private and contains all the shared xy axis initialisation functions
@@ -340,6 +343,12 @@ public:
     /// get_lean_angle_max_cd - returns the maximum lean angle the autopilot may request
     float get_lean_angle_max_cd() const;
 
+    /*
+      set_lean_angle_max_cd - set the maximum lean angle. A value of zero means to use the ANGLE_MAX parameter.
+      This is reset to zero on init_xy_controller()
+    */
+    void set_lean_angle_max_cd(float angle_max_cd) { _angle_max_override_cd = angle_max_cd; }
+    
 
     /// Other
 
@@ -462,6 +471,9 @@ protected:
 
     // high vibration handling
     bool        _vibe_comp_enabled;     // true when high vibration compensation is on
+
+    // angle max override, if zero then use ANGLE_MAX parameter
+    float       _angle_max_override_cd;
 
     // return true if on a real vehicle or SITL with lock-step scheduling
     bool has_good_timing(void) const;

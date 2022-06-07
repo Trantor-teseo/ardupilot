@@ -2559,10 +2559,11 @@ class AutoTestCopter(AutoTest):
             # now add a notch and check that post-filter the peak is squashed below 40dB
             self.set_parameters({
                 "INS_LOG_BAT_OPT": 2,
-                "INS_NOTCH_ENABLE": 1,
-                "INS_NOTCH_FREQ": freq,
-                "INS_NOTCH_ATT": 50,
-                "INS_NOTCH_BW": freq/2,
+                "INS_HNTC2_ENABLE": 1,
+                "INS_HNTC2_FREQ": freq,
+                "INS_HNTC2_ATT": 50,
+                "INS_HNTC2_BW": freq/2,
+                "INS_HNTC2_MODE": 0,
                 "SIM_VIB_MOT_MAX": 350,
             })
             self.reboot_sitl()
@@ -3961,7 +3962,7 @@ class AutoTestCopter(AutoTest):
 
         if not (m.type_mask == (target_typemask | MAV_POS_TARGET_TYPE_MASK.LAST_BYTE) or m.type_mask == target_typemask):
             raise NotAchievedException("Did not receive proper mask: expected=%u or %u, got=%u" %
-                  ((target_typemask | MAV_POS_TARGET_TYPE_MASK.LAST_BYTE), target_typemask, m.type_mask))
+                                       ((target_typemask | MAV_POS_TARGET_TYPE_MASK.LAST_BYTE), target_typemask, m.type_mask))
 
         if x - m.x > 0.1:
             raise NotAchievedException("Did not receive proper target position x: wanted=%f got=%f" % (x, m.x))
@@ -4012,7 +4013,7 @@ class AutoTestCopter(AutoTest):
         # Check the last received message
         if not (m.type_mask == (target_typemask | MAV_POS_TARGET_TYPE_MASK.LAST_BYTE) or m.type_mask == target_typemask):
             raise NotAchievedException("Did not receive proper mask: expected=%u or %u, got=%u" %
-                  ((target_typemask | MAV_POS_TARGET_TYPE_MASK.LAST_BYTE), target_typemask, m.type_mask))
+                                       ((target_typemask | MAV_POS_TARGET_TYPE_MASK.LAST_BYTE), target_typemask, m.type_mask))
 
         if vx - m.vx > 0.1:
             raise NotAchievedException("Did not receive proper target velocity vx: wanted=%f got=%f" % (vx, m.vx))

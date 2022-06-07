@@ -70,6 +70,11 @@ public:
     void set_output_mode(uint16_t mask, const enum output_mode mode) override;
     bool get_output_mode_banner(char banner_msg[], uint8_t banner_msg_len) const override;
 
+    /*
+     * return mask of channels that must be disabled because they share a group with a digital channel
+     */
+    uint16_t get_disabled_channels(uint16_t digital_mask) override;
+
     float scale_esc_to_unity(uint16_t pwm) override {
         return 2.0 * ((float) pwm - _esc_pwm_min) / (_esc_pwm_max - _esc_pwm_min) - 1.0;
     }
@@ -166,7 +171,7 @@ public:
     /*
       Set/get the dshot esc_type
      */
-    void set_dshot_esc_type(DshotEscType dshot_esc_type) override { _dshot_esc_type = dshot_esc_type; }
+    void set_dshot_esc_type(DshotEscType dshot_esc_type) override;
 
     DshotEscType get_dshot_esc_type() const override { return _dshot_esc_type; }
 #endif
@@ -200,7 +205,7 @@ public:
      * The mask uses servo channel numbering
      */
     void set_reversed_mask(uint16_t chanmask) override;
-    uint16_t get_reversed_mask() override { return _reversed_mask; }
+    uint16_t get_reversed_mask() override { return _reversed_mask << chan_offset; }
 
     /*
       mark escs as active for the purpose of sending dshot commands
