@@ -1083,6 +1083,9 @@ void NavEKF3::resetCoreErrors(void)
 // set position, velocity and yaw sources to either 0=primary, 1=secondary, 2=tertiary
 void NavEKF3::setPosVelYawSourceSet(uint8_t source_set_idx)
 {
+    if (source_set_idx < AP_NAKEKF_SOURCE_SET_MAX) {
+        AP::dal().log_event3(AP_DAL::Event(uint8_t(AP_DAL::Event::setSourceSet0)+source_set_idx));
+    }
     sources.setPosVelYawSourceSet(source_set_idx);
 }
 
@@ -1606,7 +1609,7 @@ void NavEKF3::writeWheelOdom(float delAng, float delTime, uint32_t timeStamp_ms,
 void NavEKF3::convert_parameters()
 {
     // exit immediately if param conversion has been done before
-    if (sources.configured_in_storage()) {
+    if (sources.configured()) {
         return;
     }
 
@@ -1643,12 +1646,12 @@ void NavEKF3::convert_parameters()
         case 3:
         default:
             // EK3_GPS_TYPE == 3 (No GPS) we don't know what to do, could be optical flow, beacon or external nav
-            sources.mark_configured_in_storage();
+            sources.mark_configured();
             break;
         }
     } else {
         // mark configured in storage so conversion is only run once
-        sources.mark_configured_in_storage();
+        sources.mark_configured();
     }
 
     // use EK3_ALT_SOURCE to set EK3_SRC1_POSZ
